@@ -1,0 +1,79 @@
+require("dotenv").config();
+const express = require("express");
+const http = require("http");
+const { Server } = require("socket.io");
+const cors = require("cors");
+
+const { testConnection } = require("./config/db");
+const sparePartRoutes = require("./routes/sparePartRoutes");
+const databaseRoutes = require("./routes/databaseRoutes");
+const socketHandler = require("./realtime/socket");
+
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"],
+  },
+});
+
+app.use(cors());
+app.use(express.json());
+
+socketHandler(io);
+
+app.use(express.static("public"));
+app.use("/api", sparePartRoutes);
+app.use("/", databaseRoutes);
+
+app.get("/health", (req, res) => {
+  res.json({
+    status: "OK",
+    message: "Servidor funcionando",
+    timestamp: new Date().toISOString(),
+  });
+});
+
+app.use((err, req, res, next) => {
+  console.error("Erro não tratado:", err);
+  res.status(500).json({
+    success: false,
+    error: "Erro interno do servidor",
+    message: "Ocorreu um erro inesperado",
+  });
+});
+
+const PORT = process.env.PORT || 3000;
+
+async function startServer() {
+  try {
+    await testConnection();
+
+    server.listen(PORT, () => {
+      console.log(`🚀 Servidor rodando na porta ${PORT}`);
+      console.log(`🌐 WebSocket disponível em ws://localhost:${PORT}`);
+      console.log(
+        `🔍 Análise do banco disponível em: http://localhost:${PORT}/analise-banco`
+      );
+      console.log("\n=== ROTAS DISPONÍVEIS ===");
+      console.log("GET  /health - Health check");
+      console.log("GET  /analise-banco - Análise visual do banco");
+      console.log("GET  /api/spare-parts/ids - Buscar IDs da API externa");
+      console.log("GET  /api/spare-parts/low-stock - Estoque baixo");
+      console.log("GET  /api/spare-parts/stats - Estatísticas");
+      console.log("GET  /api/spare-parts/sync - Sincronizar com API");
+      console.log("POST /api/spare-parts/insert - Inserir peça");
+      console.log("POST /api/spare-parts/update - Atualizar peça");
+      console.log("POST /api/spare-parts/delete - Deletar peça");
+      console.log("PUT  /api/spare-parts/update-stock/:id - Atualizar estoque");
+    });
+  } catch (error) {
+    console.error("❌ Erro ao iniciar servidor:", error);
+    process.exit(1);
+  }
+}
+
+startServer();
+
+module.exports = app;
