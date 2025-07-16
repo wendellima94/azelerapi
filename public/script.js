@@ -39,6 +39,8 @@ document.addEventListener("DOMContentLoaded", function () {
 });
 
 // WebSocket
+// ...código anterior...
+
 function initializeWebSocket() {
   socket = io("http://localhost:3000");
 
@@ -75,10 +77,10 @@ async function fetchCriticalStock(page = 1) {
     criticalStock = data.data;
     updateCriticalStockTable();
     updateCriticalPagination(data.pagination);
-    showSuccess(`${data.pagination.total} peças críticas encontradas`);
+    showSuccess(`${data.pagination.total} piezas críticas encontradas`);
     criticalPage = page;
   } catch (error) {
-    showError("Erro ao buscar estoque crítico: " + error.message);
+    showError("Error al buscar stock crítico: " + error.message);
   }
 }
 
@@ -91,10 +93,10 @@ async function fetchLowStock(page = 1) {
     lowStock = data.data;
     updateLowStockTable();
     updateLowPagination(data.pagination);
-    showSuccess(`${data.pagination.total} peças com estoque ≤ 1 encontradas`);
+    showSuccess(`${data.pagination.total} piezas con stock ≤ 1 encontradas`);
     lowPage = page;
   } catch (error) {
-    showError("Erro ao buscar estoque baixo: " + error.message);
+    showError("Error al buscar stock bajo: " + error.message);
   }
 }
 
@@ -105,9 +107,9 @@ async function fetchStats() {
     stats = data.data;
     updateStatsDisplay();
     updateDashboardCards();
-    showSuccess("Estatísticas atualizadas");
+    showSuccess("Estadísticas actualizadas");
   } catch (error) {
-    showError("Erro ao buscar estatísticas: " + error.message);
+    showError("Error al buscar estadísticas: " + error.message);
   }
 }
 
@@ -124,7 +126,7 @@ async function fetchDashboard() {
       showAlert(data.data.alertMessage);
     }
   } catch (error) {
-    showError("Erro ao buscar dashboard: " + error.message);
+    showError("Error al buscar dashboard: " + error.message);
   }
 }
 
@@ -132,7 +134,7 @@ async function syncWithAzeler() {
   try {
     azelerSyncStatus.syncing = true;
     updateAzelerSyncCard();
-    showInfo("Sincronizando com API Azeler...");
+    showInfo("Sincronizando con la API de Azeler...");
     const response = await fetch(`${API_URL}/spare-parts/sync`);
     const data = await response.json();
 
@@ -147,12 +149,12 @@ async function syncWithAzeler() {
       syncing: false,
     };
     updateAzelerSyncCard();
-    showSuccess("Sincronização concluída!");
+    showSuccess("¡Sincronización completada!");
     await fetchDashboard();
   } catch (error) {
     azelerSyncStatus.syncing = false;
     updateAzelerSyncCard();
-    showError("Erro na sincronização: " + error.message);
+    showError("Error en la sincronización: " + error.message);
   }
 }
 
@@ -168,12 +170,12 @@ function updateAzelerSyncCard() {
   }
 
   statusDiv.innerHTML = `
-    <b>Última sincronização:</b> ${azelerSyncStatus.lastSync || "Nunca"}<br>
+    <b>Última sincronización:</b> ${azelerSyncStatus.lastSync || "Nunca"}<br>
     <b>Total Azeler:</b> ${azelerSyncStatus.totalExternal}<br>
     <b>Total Local:</b> ${azelerSyncStatus.totalLocal}<br>
-    <b>Faltando localmente:</b> ${azelerSyncStatus.missingInLocal}<br>
-    <b>Faltando na Azeler:</b> ${azelerSyncStatus.missingInExternal}<br>
-    <b>Estoque crítico:</b> ${azelerSyncStatus.lowStockItems}
+    <b>Faltan localmente:</b> ${azelerSyncStatus.missingInLocal}<br>
+    <b>Faltan en Azeler:</b> ${azelerSyncStatus.missingInExternal}<br>
+    <b>Stock crítico:</b> ${azelerSyncStatus.lowStockItems}
   `;
   btn.disabled = false;
 }
@@ -181,7 +183,7 @@ function updateAzelerSyncCard() {
 async function checkStock() {
   const warehouseID = document.getElementById("warehouse-id").value;
   if (!warehouseID) {
-    showError("Digite um WarehouseID");
+    showError("Introduce un WarehouseID");
     return;
   }
 
@@ -197,9 +199,9 @@ async function checkStock() {
       showAlert(data.alert);
     }
   } catch (error) {
-    checkResult = { success: false, message: "Peça não encontrada" };
+    checkResult = { success: false, message: "Pieza no encontrada" };
     updateCheckResult();
-    showError("Erro ao verificar estoque: " + error.message);
+    showError("Error al comprobar el stock: " + error.message);
   }
 }
 
@@ -214,7 +216,7 @@ async function confirmUpdateStock() {
   const newStock = document.getElementById("new-stock").value;
 
   if (!warehouseID || newStock === "") {
-    showError("Digite WarehouseID e novo estoque");
+    showError("Introduce WarehouseID y nuevo stock");
     return;
   }
 
@@ -237,14 +239,14 @@ async function confirmUpdateStock() {
       document.getElementById("new-stock").value = "";
       document.getElementById("update-stock-group").style.display = "none";
 
-      // Recarrega dados
+      // Recarga datos
       await checkStock();
       await fetchDashboard();
     } else {
       showError(data.message);
     }
   } catch (error) {
-    showError("Erro ao atualizar estoque: " + error.message);
+    showError("Error al actualizar el stock: " + error.message);
   }
 }
 
@@ -253,7 +255,7 @@ function updateCriticalStockTable() {
   const tbody = document.getElementById("critical-stock-body");
 
   if (criticalStock.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6">Nenhuma peça crítica</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6">Ninguna pieza crítica</td></tr>';
     return;
   }
 
@@ -278,7 +280,7 @@ function updateLowStockTable() {
 
   if (lowStock.length === 0) {
     tbody.innerHTML =
-      '<tr><td colspan="6">Clique em "Ver Estoque ≤ 1"</td></tr>';
+      '<tr><td colspan="6">Haz clic en "Ver Stock ≤ 1"</td></tr>';
     return;
   }
 
@@ -332,7 +334,7 @@ function renderPagination(pagination, fetchFunction) {
   if (page < totalPages) {
     html += `<button onclick="${fetchFunction.name}(${
       page + 1
-    })">Próxima</button>`;
+    })">Siguiente</button>`;
   }
   return html;
 }
@@ -341,14 +343,14 @@ function updateStatsDisplay() {
   const display = document.getElementById("stats-display");
   display.textContent = stats
     ? JSON.stringify(stats, null, 2)
-    : "Clique para ver estatísticas";
+    : "Haz clic para ver estadísticas";
 }
 
 function updateCheckResult() {
   const display = document.getElementById("check-result");
   display.textContent = checkResult
     ? JSON.stringify(checkResult, null, 2)
-    : "Digite um WarehouseID e clique";
+    : "Introduce un WarehouseID y haz clic";
 }
 
 function updateDashboardCards() {
@@ -358,10 +360,15 @@ function updateDashboardCards() {
     stats.criticalStock || 0;
   document.getElementById("normal-count").textContent = stats.lowStock || 0;
   document.getElementById("high-count").textContent = stats.normalStock || 0;
-  document.getElementById("total-count").textContent = stats.total || 0;
+
+  const total =
+    azelerSyncStatus && azelerSyncStatus.totalExternal
+      ? azelerSyncStatus.totalExternal
+      : stats.total || 0;
+  document.getElementById("total-count").textContent = total;
 }
 
-// Funções de notificação
+// Notificaciones
 function showAlert(message) {
   showNotification(message, "alert");
 }
@@ -386,18 +393,10 @@ function showNotification(message, type = "info") {
 
   container.appendChild(alert);
 
-  // Remove após 5 segundos
+  // Eliminar después de 5 segundos
   setTimeout(() => {
     if (alert.parentNode) {
       alert.parentNode.removeChild(alert);
     }
   }, 5000);
 }
-
-// function showAlerts(criticalItems) {
-//   if (criticalItems && criticalItems.length > 0) {
-//     showAlert(
-//       `⚠️ ${criticalItems.length} peça(s) com estoque crítico (0 unidades)!`
-//     );
-//   }
-// }

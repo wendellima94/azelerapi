@@ -16,6 +16,8 @@
     "express": "^5.1.0",
     "mssql": "^11.0.1",
     "mysql2": "^3.14.1",
-    "socket.io": "^4.7.5"
+    "socket.io": "^4.7.5",
+    "swagger-jsdoc": "^6.2.8",
+    "swagger-ui-express": "^5.0.1"
   }
 }

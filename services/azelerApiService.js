@@ -13,7 +13,6 @@ function generateAuthToken(username, password) {
   return Buffer.from(credentials).toString("base64");
 }
 
-// Função auxiliar para configuração padrão das requisições
 function getRequestConfig(method, endpoint, data = null) {
   const authToken = generateAuthToken(API_CONFIG.username, API_CONFIG.password);
 

@@ -1,24 +1,24 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="es">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Desguaces - Monitoramento de Estoque Crítico</title>
+    <title>Desguaces - Monitorización de Stock Crítico</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <div class="container">
-      <h1>Desguaces - Monitoramento de Estoque Crítico</h1>
-      <p>Status do WebSocket: <b id="socket-status">Desconectado</b></p>
+      <h1>Desguaces - Monitorización de Stock Crítico</h1>
+      <p>Estado del WebSocket: <b id="socket-status">Desconectado</b></p>
 
       <div class="button-group">
         <button onclick="fetchCriticalStock(1)">
-          Atualizar Estoque Crítico (REST)
+          Actualizar Stock Crítico (REST)
         </button>
-        <button onclick="fetchLowStock(1)">Ver Estoque ≤ 1</button>
-        <button onclick="fetchStats()">Ver Estatísticas</button>
+        <button onclick="fetchLowStock(1)">Ver Stock ≤ 1</button>
+        <button onclick="fetchStats()">Ver Estadísticas</button>
         <button onclick="fetchDashboard()">Dashboard</button>
-        <button onclick="syncWithAzeler()">Sincronizar com Azeler</button>
+        <button onclick="syncWithAzeler()">Sincronizar con Azeler</button>
       </div>
 
       <h2>Dashboard</h2>
@@ -42,87 +42,87 @@
           </div>
         </div>
         <div class="card azeler" id="azeler-sync-card">
-          <h3>Sincronização Azeler</h3>
+          <h3>Sincronización Azeler</h3>
           <div id="azeler-sync-status">Nunca sincronizado</div>
           <button onclick="syncWithAzeler()" id="azeler-sync-btn">
-            Sincronizar agora
+            Sincronizar ahora
           </button>
         </div>
       </div>
 
-      <h2>Peças com Estoque Crítico (0 unidades)</h2>
+      <h2>Piezas con Stock Crítico (0 unidades)</h2>
       <div class="table-container">
         <table id="critical-stock-table">
           <thead>
             <tr>
               <th>WarehouseID</th>
-              <th>Descrição</th>
-              <th>Estoque</th>
+              <th>Descripción</th>
+              <th>Stock</th>
               <th>Marca</th>
               <th>Modelo</th>
-              <th>Status</th>
+              <th>Estado</th>
             </tr>
           </thead>
           <tbody id="critical-stock-body">
             <tr>
-              <td colspan="6">Nenhuma peça crítica</td>
+              <td colspan="6">Ninguna pieza crítica</td>
             </tr>
           </tbody>
         </table>
         <div class="pagination" id="critical-pagination"></div>
       </div>
 
-      <h2>Peças com Estoque ≤ 1</h2>
+      <h2>Piezas con Stock ≤ 1</h2>
       <div class="table-container">
         <table id="low-stock-table">
           <thead>
             <tr>
               <th>WarehouseID</th>
-              <th>Descrição</th>
-              <th>Estoque</th>
+              <th>Descripción</th>
+              <th>Stock</th>
               <th>Marca</th>
               <th>Modelo</th>
-              <th>Status</th>
+              <th>Estado</th>
             </tr>
           </thead>
           <tbody id="low-stock-body">
             <tr>
-              <td colspan="6">Clique em "Ver Estoque ≤ 1"</td>
+              <td colspan="6">Haz clic en "Ver Stock ≤ 1"</td>
             </tr>
           </tbody>
         </table>
         <div class="pagination" id="low-pagination"></div>
       </div>
 
-      <h2>Estatísticas</h2>
-      <button onclick="fetchStats()">Atualizar Estatísticas</button>
+      <h2>Estadísticas</h2>
+      <button onclick="fetchStats()">Actualizar Estadísticas</button>
       <div class="stats-container">
-        <pre id="stats-display">Clique para ver estatísticas</pre>
+        <pre id="stats-display">Haz clic para ver estadísticas</pre>
       </div>
 
-      <h2>Checar Estoque de uma Peça</h2>
+      <h2>Comprobar Stock de una Pieza</h2>
       <div class="input-group">
         <input type="number" id="warehouse-id" placeholder="WarehouseID" />
-        <button onclick="checkStock()">Checar Estoque</button>
-        <button onclick="updateStock()">Atualizar Estoque</button>
+        <button onclick="checkStock()">Comprobar Stock</button>
+        <button onclick="updateStock()">Actualizar Stock</button>
       </div>
 
       <div class="input-group" id="update-stock-group" style="display: none">
         <input
           type="number"
           id="new-stock"
-          placeholder="Novo estoque"
+          placeholder="Nuevo stock"
           min="0"
         />
-        <button onclick="confirmUpdateStock()">Confirmar Atualização</button>
+        <button onclick="confirmUpdateStock()">Confirmar Actualización</button>
       </div>
 
       <div class="result-container">
-        <pre id="check-result">Digite um WarehouseID e clique</pre>
+        <pre id="check-result">Introduce un WarehouseID y haz clic</pre>
       </div>
 
       <div id="alerts-container">
-        <!-- Alertas aparecerão aqui -->
+        <!-- Las alertas aparecerán aquí -->
       </div>
     </div>
 

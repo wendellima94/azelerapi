@@ -6,7 +6,16 @@ const sparePartModel = require("../models/sparePartModel");
 
 // ==================== ROTAS ORIGINAIS ====================
 
-// Buscar todos os IDs da API externa
+/**
+ * @swagger
+ * /api/spare-parts/ids:
+ *   get:
+ *     summary: Buscar todos os IDs da API externa
+ *     tags: [SpareParts]
+ *     responses:
+ *       200:
+ *         description: IDs de peças obtidos com sucesso
+ */
 router.get("/spare-parts/ids", async (req, res) => {
   try {
     const data = await azelerApiService.getAllIds();
@@ -20,7 +29,32 @@ router.get("/spare-parts/ids", async (req, res) => {
   }
 });
 
-// Inserir peça
+/**
+ * @swagger
+ * /api/spare-parts/insert:
+ *   post:
+ *     summary: Inserir peça
+ *     tags: [SpareParts]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [warehouseID, partDescription, vehicleType]
+ *             properties:
+ *               warehouseID:
+ *                 type: integer
+ *               partDescription:
+ *                 type: string
+ *               vehicleType:
+ *                 type: integer
+ *     responses:
+ *       200:
+ *         description: Peça adicionada à fila de publicação com sucesso
+ *       400:
+ *         description: Campos obrigatórios ausentes
+ */
 router.post("/spare-parts/insert", async (req, res) => {
   try {
     const { warehouseID, partDescription, vehicleType } = req.body;
@@ -44,7 +78,36 @@ router.post("/spare-parts/insert", async (req, res) => {
   }
 });
 
-// Atualizar peça
+/**
+ * @swagger
+ * /api/spare-parts/update:
+ *   post:
+ *     summary: Atualizar peça
+ *     tags: [SpareParts]
+ *     security:
+ *         - basicAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [warehouseID, partDescription, vehicleType]
+ *             properties:
+ *               warehouseID:
+ *                 type: integer
+ *               partDescription:
+ *                 type: string
+ *               vehicleType:
+ *                 type: integer
+ *     responses:
+ *       200:
+ *         description: Peça adicionada à fila de atualização com sucesso
+ *       400:
+ *         description: Campos obrigatórios ausentes
+ */
+
+
 router.post("/spare-parts/update", async (req, res) => {
   try {
     const { warehouseID, partDescription, vehicleType } = req.body;
@@ -68,7 +131,30 @@ router.post("/spare-parts/update", async (req, res) => {
   }
 });
 
-// Deletar peça
+/**
+ * @swagger
+ * /api/spare-parts/delete:
+ *   post:
+ *     summary: Deletar peça
+ *     tags: [SpareParts]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [warehouseID, externalPlatformName]
+ *             properties:
+ *               warehouseID:
+ *                 type: integer
+ *               externalPlatformName:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Peça adicionada à fila de exclusão com sucesso
+ *       400:
+ *         description: Campos obrigatórios ausentes
+ */
 router.post("/spare-parts/delete", async (req, res) => {
   try {
     const { warehouseID, externalPlatformName } = req.body;
@@ -94,7 +180,27 @@ router.post("/spare-parts/delete", async (req, res) => {
 
 // ==================== NOVAS ROTAS DE MONITORAMENTO COM PAGINAÇÃO ====================
 
-// Buscar estoque crítico (apenas 0) - COM PAGINAÇÃO
+/**
+ * @swagger
+ * /api/spare-parts/critical-stock:
+ *   get:
+ *     summary: Buscar peças com estoque crítico (0 unidades) - com paginação
+ *     tags: [SpareParts]
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *         description: Página
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *         description: Limite por página
+ *     responses:
+ *       200:
+ *         description: Peças com estoque crítico (0 unidades)
+ */
 router.get("/spare-parts/critical-stock", async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -118,7 +224,32 @@ router.get("/spare-parts/critical-stock", async (req, res) => {
   }
 });
 
-// Buscar estoque baixo (customizável) - COM PAGINAÇÃO
+/**
+ * @swagger
+ * /api/spare-parts/low-stock:
+ *   get:
+ *     summary: Buscar peças com estoque baixo (customizável) - com paginação
+ *     tags: [SpareParts]
+ *     parameters:
+ *       - in: query
+ *         name: threshold
+ *         schema:
+ *           type: integer
+ *         description: Valor máximo de estoque para considerar baixo
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *         description: Página
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *         description: Limite por página
+ *     responses:
+ *       200:
+ *         description: Peças com estoque baixo
+ */
 router.get("/spare-parts/low-stock", async (req, res) => {
   try {
     const threshold = parseInt(req.query.threshold) || 0;
@@ -147,7 +278,16 @@ router.get("/spare-parts/low-stock", async (req, res) => {
   }
 });
 
-// Sincronizar com API externa
+/**
+ * @swagger
+ * /api/spare-parts/sync:
+ *   get:
+ *     summary: Sincronizar com API externa
+ *     tags: [SpareParts]
+ *     responses:
+ *       200:
+ *         description: Sincronização concluída
+ */
 router.get("/spare-parts/sync", async (req, res) => {
   try {
     const syncResult = await lowStockService.syncWithAzelerApi();
@@ -161,7 +301,16 @@ router.get("/spare-parts/sync", async (req, res) => {
   }
 });
 
-// Estatísticas
+/**
+ * @swagger
+ * /api/spare-parts/stats:
+ *   get:
+ *     summary: Estatísticas de estoque
+ *     tags: [SpareParts]
+ *     responses:
+ *       200:
+ *         description: Estatísticas retornadas
+ */
 router.get("/spare-parts/stats", async (req, res) => {
   try {
     const stats = await lowStockService.getStats();
@@ -174,7 +323,25 @@ router.get("/spare-parts/stats", async (req, res) => {
   }
 });
 
-// Verificar estoque específico (lógica atualizada)
+/**
+ * @swagger
+ * /api/spare-parts/check-stock/{warehouseID}:
+ *   get:
+ *     summary: Verificar estoque de uma peça específica
+ *     tags: [SpareParts]
+ *     parameters:
+ *       - in: path
+ *         name: warehouseID
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: WarehouseID da peça
+ *     responses:
+ *       200:
+ *         description: Dados da peça e status de estoque
+ *       404:
+ *         description: Peça não encontrada
+ */
 router.get("/spare-parts/check-stock/:warehouseID", async (req, res) => {
   try {
     const { warehouseID } = req.params;
@@ -214,7 +381,35 @@ router.get("/spare-parts/check-stock/:warehouseID", async (req, res) => {
   }
 });
 
-// Atualizar estoque
+/**
+ * @swagger
+ * /api/spare-parts/update-stock/{warehouseID}:
+ *   put:
+ *     summary: Atualizar estoque de uma peça
+ *     tags: [SpareParts]
+ *     parameters:
+ *       - in: path
+ *         name: warehouseID
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: WarehouseID da peça
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [stock]
+ *             properties:
+ *               stock:
+ *                 type: integer
+ *     responses:
+ *       200:
+ *         description: Estoque atualizado com sucesso
+ *       404:
+ *         description: Peça não encontrada
+ */
 router.put("/spare-parts/update-stock/:warehouseID", async (req, res) => {
   try {
     const { warehouseID } = req.params;
@@ -262,7 +457,27 @@ router.put("/spare-parts/update-stock/:warehouseID", async (req, res) => {
 
 // ==================== ROTAS ADICIONAIS ÚTEIS COM PAGINAÇÃO ====================
 
-// Buscar todas as peças (para administração) - COM PAGINAÇÃO
+/**
+ * @swagger
+ * /api/spare-parts/all:
+ *   get:
+ *     summary: Buscar todas as peças (administração) - com paginação
+ *     tags: [SpareParts]
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *         description: Página
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *         description: Limite por página
+ *     responses:
+ *       200:
+ *         description: Todas as peças obtidas com sucesso
+ */
 router.get("/spare-parts/all", async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -282,7 +497,36 @@ router.get("/spare-parts/all", async (req, res) => {
   }
 });
 
-// Buscar peças por status - COM PAGINAÇÃO
+/**
+ * @swagger
+ * /api/spare-parts/by-status/{status}:
+ *   get:
+ *     summary: Buscar peças por status (crítico, normal, alto) - com paginação
+ *     tags: [SpareParts]
+ *     parameters:
+ *       - in: path
+ *         name: status
+ *         required: true
+ *         schema:
+ *           type: string
+ *           enum: [critico, normal, alto]
+ *         description: Status do estoque
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *         description: Página
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *         description: Limite por página
+ *     responses:
+ *       200:
+ *         description: Peças filtradas por status
+ *       400:
+ *         description: Status inválido
+ */
 router.get("/spare-parts/by-status/:status", async (req, res) => {
   try {
     const { status } = req.params;
@@ -341,7 +585,16 @@ router.get("/spare-parts/by-status/:status", async (req, res) => {
   }
 });
 
-// Dashboard resumido
+/**
+ * @swagger
+ * /api/spare-parts/dashboard:
+ *   get:
+ *     summary: Dashboard resumido de estoque
+ *     tags: [SpareParts]
+ *     responses:
+ *       200:
+ *         description: Dashboard obtido com sucesso
+ */
 router.get("/spare-parts/dashboard", async (req, res) => {
   try {
     const stats = await lowStockService.getStats();

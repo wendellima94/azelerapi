@@ -3,11 +3,14 @@ const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
 const cors = require("cors");
+const swaggerUi = require("swagger-ui-express");
+const swaggerSpec = require ("./swagger")
 
 const { testConnection } = require("./config/db");
 const sparePartRoutes = require("./routes/sparePartRoutes");
 const databaseRoutes = require("./routes/databaseRoutes");
 const socketHandler = require("./realtime/socket");
+const swaggerJSDoc = require("swagger-jsdoc");
 
 const app = express();
 const server = http.createServer(app);
@@ -22,7 +25,7 @@ app.use(cors());
 app.use(express.json());
 
 socketHandler(io);
-
+app.use("/api-docs",swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 app.use(express.static("public"));
 app.use("/api", sparePartRoutes);
 app.use("/", databaseRoutes);
