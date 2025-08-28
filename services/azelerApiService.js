@@ -2,9 +2,9 @@ const axios = require("axios");
 
 // Configurações da API externa
 const API_CONFIG = {
-  baseURL: "https://apiapp.azelerecambios.com/api",
-  username: "desguacesgp",
-  password: "456440Dgp",
+  baseURL: "https://pre-apiapp.azelerecambios.com/api",
+  username: "API_INNOVA",
+  password: "TestInnova",
 };
 
 // Função para gerar o token Base64
@@ -47,7 +47,7 @@ const azelerApiService = {
   async updateSparePart(data) {
     const config = getRequestConfig("POST", "/v1/spareParts/Update", data);
     const response = await axios(config);
-    return response.data;
+    return response; // Retorne o objeto completo do Axios!
   },
 
   // Deletar peça
@@ -57,9 +57,8 @@ const azelerApiService = {
     return response.data;
   },
 
-  async updateProductStatus(warehouseID, localProductData){
+  async updateProductStatus(warehouseID, localProductData) {
     try {
-
       const azelerUpdateData = {
         warehouseID: warehouseID,
         stock: localProductData.stock,
@@ -70,16 +69,23 @@ const azelerApiService = {
         updated_at: new Date().toISOString(),
       };
 
-      const config = getRequestConfig("POST", "/v1/spareParts/UpdateStatus", azelerUpdateData);
+      const config = getRequestConfig(
+        "POST",
+        "/v1/spareParts/UpdateStatus",
+        azelerUpdateData
+      );
       const response = await axios(config);
       return response.data;
     } catch (error) {
-      console.error(`Error en la atualizacion de status en Azeler para warehouse ID ${warehouseID}:`, error.message);
+      console.error(
+        `Error en la atualizacion de status en Azeler para warehouse ID ${warehouseID}:`,
+        error.message
+      );
       throw error;
     }
   },
 
-  async updateMultipleProductStatus(productUpdates){
+  async updateMultipleProductStatus(productUpdates) {
     try {
       const results = [];
 
@@ -89,17 +95,20 @@ const azelerApiService = {
 
         const chunkPromises = chunk.map(async (product) => {
           try {
-            const result = await this.updateProductStatus(product.warehouseID, product);
+            const result = await this.updateProductStatus(
+              product.warehouseID,
+              product
+            );
             return {
               warehouseID: product.warehouseID,
               sucess: true,
-              result: result
+              result: result,
             };
           } catch (error) {
             return {
               warehouseID: product.warehouseID,
               success: false,
-              error: error.message
+              error: error.message,
             };
           }
         });
@@ -109,39 +118,49 @@ const azelerApiService = {
 
         //pausa entre chunks
         if (i + chunkSize < productUpdates.length) {
-          await new Promise(resolve => setTimeout(resolve, 1000));
+          await new Promise((resolve) => setTimeout(resolve, 1000));
         }
       }
 
       return results;
     } catch (error) {
-      console.error("Erro ao atualizar multiplos produtos no azeler:", error.message);
+      console.error(
+        "Erro ao atualizar multiplos produtos no azeler:",
+        error.message
+      );
       throw error;
     }
-  }, 
+  },
 
   async syncSingleProduct(warehouseID, sparePartModel) {
     try {
       const localProduct = await sparePartModel.getByWarehouseId(warehouseID);
 
       if (!localProduct) {
-        throw new Error(`Produto com warehouse ID ${warehouseID} nao encontrado no banco local`);
-
+        throw new Error(
+          `Produto com warehouse ID ${warehouseID} nao encontrado no banco local`
+        );
       }
 
-      const azelerResult = await this.updateProductStatus(warehouseID, localProduct);
+      const azelerResult = await this.updateProductStatus(
+        warehouseID,
+        localProduct
+      );
 
       return {
         warehouseID: warehouseID,
         localData: localProduct,
         azelerResult: azelerResult,
-        syncedAt: new Date().toISOString()
+        syncedAt: new Date().toISOString(),
       };
-    } catch(error) {
-      console.error(`Erro ao sincronizar produto ${warehouseID}:`, error.message);
+    } catch (error) {
+      console.error(
+        `Erro ao sincronizar produto ${warehouseID}:`,
+        error.message
+      );
       throw error;
     }
-  }
+  },
 };
 
 module.exports = { azelerApiService, generateAuthToken };
