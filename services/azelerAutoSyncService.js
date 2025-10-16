@@ -9,11 +9,11 @@ const azelerAutoSyncService = {
    */
   async syncAllProducts(matriculas = "") {
     try {
-      console.log("🔄 Iniciando sync automático Desguaces → Azeler...");
+      console.log("Iniciando sync automático Desguaces → Azeler...");
 
       // 1. Busca peças no Desguaces API (fonte oficial agora)
       const pecas = await desguacesApi.obterPecasComImagens(matriculas);
-      console.log(`📦 Total peças encontradas no Desguaces: ${pecas.length}`);
+      console.log(`Total peças encontradas no Desguaces: ${pecas.length}`);
 
       if (!pecas.length) {
         return {
@@ -41,7 +41,7 @@ const azelerAutoSyncService = {
       );
 
       console.log(
-        `✅ Sync concluída: ${results.filter((r) => r.success).length} ok, ${
+        `Sync concluída: ${results.filter((r) => r.success).length} ok, ${
           results.filter((r) => !r.success).length
         } falhas`
       );
@@ -53,7 +53,7 @@ const azelerAutoSyncService = {
         details: results,
       };
     } catch (error) {
-      console.error("❌ Falha na sync automática:", error.message);
+      console.error("Falha na sync automática:", error.message);
       return { success: false, error: error.message };
     }
   },

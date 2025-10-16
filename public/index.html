@@ -1,132 +1,217 @@
+<!-- public/sse.html -->
 <!DOCTYPE html>
-<html lang="es">
+<html lang="pt-BR">
   <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Desguaces - Monitorización de Stock Crítico</title>
-    <link rel="stylesheet" href="styles.css" />
+    <meta charset="utf-8" />
+    <title>Progresso de Sincronização (SSE)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      body {
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial,
+          sans-serif;
+        margin: 20px;
+        color: #222;
+      }
+      h1 {
+        font-size: 20px;
+        margin-bottom: 10px;
+      }
+      .controls {
+        margin-bottom: 16px;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .status {
+        margin: 12px 0;
+        padding: 10px;
+        background: #f6f8fa;
+        border: 1px solid #e1e4e8;
+        border-radius: 6px;
+      }
+      .log {
+        white-space: pre-wrap;
+        background: #0e1116;
+        color: #c9d1d9;
+        padding: 12px;
+        border-radius: 6px;
+        max-height: 60vh;
+        overflow: auto;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+          "Liberation Mono", "Courier New", monospace;
+      }
+      button {
+        cursor: pointer;
+        padding: 8px 12px;
+        border: 1px solid #d0d7de;
+        border-radius: 6px;
+        background: #f6f8fa;
+      }
+      button:hover {
+        background: #eef1f4;
+      }
+      input[type="text"] {
+        padding: 8px;
+        border: 1px solid #d0d7de;
+        border-radius: 6px;
+        width: 420px;
+      }
+      .ok {
+        color: #2da44e;
+      }
+      .err {
+        color: #cf222e;
+      }
+      .muted {
+        color: #57606a;
+      }
+      .progress {
+        height: 10px;
+        background: #eaeef2;
+        border-radius: 6px;
+        overflow: hidden;
+      }
+      .bar {
+        height: 100%;
+        width: 0%;
+        background: #2da44e;
+        transition: width 0.2s ease;
+      }
+    </style>
   </head>
   <body>
-    <div class="container">
-      <h1>Desguaces - Monitorización de Stock Crítico</h1>
-      <p>Estado del WebSocket: <b id="socket-status">Desconectado</b></p>
+    <h1>Sincronização via SSE</h1>
 
-      <div class="button-group">
-        <button onclick="fetchCriticalStock(1)">
-          Actualizar Stock Crítico (REST)
-        </button>
-        <button onclick="fetchLowStock(1)">Ver Stock ≤ 1</button>
-        <button onclick="fetchStats()">Ver Estadísticas</button>
-        <button onclick="fetchDashboard()">Dashboard</button>
-        <button onclick="syncWithAzeler()">Sincronizar con Azeler</button>
+    <div class="controls">
+      <label for="endpoint">Endpoint SSE:</label>
+      <input id="endpoint" type="text" value="/api/sync/despiece/stream" />
+      <button id="startBtn">Conectar</button>
+      <button id="closeBtn" disabled>Fechar</button>
+      <span id="connStatus" class="muted">Desconectado</span>
+    </div>
+
+    <div class="status">
+      <div><strong>Status:</strong> <span id="statusText">-</span></div>
+      <div>
+        <strong>Página:</strong> <span id="pageText">-</span> de
+        <span id="lastPageText">-</span>
       </div>
-
-      <h2>Dashboard</h2>
-      <div id="dashboard-container">
-        <div class="dashboard-cards">
-          <div class="card critical">
-            <h3>Crítico (0)</h3>
-            <span id="critical-count">-</span>
-          </div>
-          <div class="card normal">
-            <h3>Normal (1)</h3>
-            <span id="normal-count">-</span>
-          </div>
-          <div class="card high">
-            <h3>Alto (&gt;1)</h3>
-            <span id="high-count">-</span>
-          </div>
-          <div class="card total">
-            <h3>Total</h3>
-            <span id="total-count">-</span>
-          </div>
-        </div>
-        <div class="card azeler" id="azeler-sync-card">
-          <h3>Sincronización Azeler</h3>
-          <div id="azeler-sync-status">Nunca sincronizado</div>
-          <button onclick="syncWithAzeler()" id="azeler-sync-btn">
-            Sincronizar ahora
-          </button>
-        </div>
+      <div>
+        <strong>Processados:</strong> <span id="procText">0</span> de
+        <span id="totalText">-</span>
       </div>
-
-      <h2>Piezas con Stock Crítico (0 unidades)</h2>
-      <div class="table-container">
-        <table id="critical-stock-table">
-          <thead>
-            <tr>
-              <th>WarehouseID</th>
-              <th>Descripción</th>
-              <th>Stock</th>
-              <th>Marca</th>
-              <th>Modelo</th>
-              <th>Estado</th>
-            </tr>
-          </thead>
-          <tbody id="critical-stock-body">
-            <tr>
-              <td colspan="6">Ninguna pieza crítica</td>
-            </tr>
-          </tbody>
-        </table>
-        <div class="pagination" id="critical-pagination"></div>
-      </div>
-
-      <h2>Piezas con Stock ≤ 1</h2>
-      <div class="table-container">
-        <table id="low-stock-table">
-          <thead>
-            <tr>
-              <th>WarehouseID</th>
-              <th>Descripción</th>
-              <th>Stock</th>
-              <th>Marca</th>
-              <th>Modelo</th>
-              <th>Estado</th>
-            </tr>
-          </thead>
-          <tbody id="low-stock-body">
-            <tr>
-              <td colspan="6">Haz clic en "Ver Stock ≤ 1"</td>
-            </tr>
-          </tbody>
-        </table>
-        <div class="pagination" id="low-pagination"></div>
-      </div>
-
-      <h2>Estadísticas</h2>
-      <button onclick="fetchStats()">Actualizar Estadísticas</button>
-      <div class="stats-container">
-        <pre id="stats-display">Haz clic para ver estadísticas</pre>
-      </div>
-
-      <h2>Comprobar Stock de una Pieza</h2>
-      <div class="input-group">
-        <input type="number" id="warehouse-id" placeholder="WarehouseID" />
-        <button onclick="checkStock()">Comprobar Stock</button>
-        <button onclick="updateStock()">Actualizar Stock</button>
-      </div>
-
-      <div class="input-group" id="update-stock-group" style="display: none">
-        <input
-          type="number"
-          id="new-stock"
-          placeholder="Nuevo stock"
-          min="0"
-        />
-        <button onclick="confirmUpdateStock()">Confirmar Actualización</button>
-      </div>
-
-      <div class="result-container">
-        <pre id="check-result">Introduce un WarehouseID y haz clic</pre>
-      </div>
-
-      <div id="alerts-container">
-        <!-- Las alertas aparecerán aquí -->
+      <div class="progress" aria-label="Progresso">
+        <div id="bar" class="bar"></div>
       </div>
     </div>
 
-    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-    <script src="script.js"></script>
+    <div class="log" id="log"></div>
+
+    <script>
+      const endpointInput = document.getElementById("endpoint");
+      const startBtn = document.getElementById("startBtn");
+      const closeBtn = document.getElementById("closeBtn");
+      const connStatus = document.getElementById("connStatus");
+      const log = document.getElementById("log");
+      const statusText = document.getElementById("statusText");
+      const pageText = document.getElementById("pageText");
+      const lastPageText = document.getElementById("lastPageText");
+      const procText = document.getElementById("procText");
+      const totalText = document.getElementById("totalText");
+      const bar = document.getElementById("bar");
+
+      let es = null;
+
+      function appendLog(obj) {
+        const ts = new Date().toLocaleTimeString();
+        log.textContent += `[${ts}] ${JSON.stringify(obj, null, 2)}\n\n`;
+        log.scrollTop = log.scrollHeight;
+      }
+
+      function setProgress(pct) {
+        const num = Math.max(0, Math.min(100, Number(pct) || 0));
+        bar.style.width = num + "%";
+      }
+
+      function setConn(connected) {
+        if (connected) {
+          connStatus.textContent = "Conectado";
+          connStatus.className = "ok";
+          startBtn.disabled = true;
+          closeBtn.disabled = false;
+        } else {
+          connStatus.textContent = "Desconectado";
+          connStatus.className = "muted";
+          startBtn.disabled = false;
+          closeBtn.disabled = true;
+        }
+      }
+
+      startBtn.addEventListener("click", () => {
+        const url = endpointInput.value.trim() || "/api/sync/despiece/stream";
+        try {
+          es = new EventSource(url);
+
+          setConn(true);
+          statusText.textContent = "conectando...";
+
+          es.onmessage = (event) => {
+            try {
+              const data = JSON.parse(event.data);
+              appendLog(data);
+
+              if (data.status) statusText.textContent = data.status;
+
+              if (typeof data.currentPage !== "undefined") {
+                pageText.textContent = data.currentPage;
+              }
+              if (typeof data.lastPage !== "undefined") {
+                lastPageText.textContent = data.lastPage;
+              }
+              if (typeof data.totalProcessed !== "undefined") {
+                procText.textContent = data.totalProcessed;
+              }
+              if (typeof data.total !== "undefined" && data.total !== null) {
+                totalText.textContent = data.total;
+              }
+              if (typeof data.percentage !== "undefined") {
+                setProgress(data.percentage);
+              }
+
+              if (data.status === "completed" || data.status === "error") {
+                setConn(false);
+                es.close();
+                es = null;
+              }
+            } catch (e) {
+              appendLog({ parseError: e.message, raw: event.data });
+            }
+          };
+
+          es.onerror = (e) => {
+            appendLog({ error: "SSE erro ou conexão encerrada", detail: e });
+            statusText.textContent = "error";
+            setConn(false);
+            if (es) {
+              es.close();
+              es = null;
+            }
+          };
+        } catch (err) {
+          appendLog({ error: "Falha ao iniciar SSE", detail: err.message });
+          setConn(false);
+        }
+      });
+
+      closeBtn.addEventListener("click", () => {
+        if (es) {
+          es.close();
+          es = null;
+        }
+        setConn(false);
+        statusText.textContent = "fechado pelo usuário";
+      });
+    </script>
   </body>
 </html>

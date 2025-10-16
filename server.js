@@ -1,90 +1,197 @@
-require("dotenv").config();
+// server.js - Servidor Express com rotas (CommonJS)
+
 const express = require("express");
-const http = require("http");
-const { Server } = require("socket.io");
-const cors = require("cors");
-const swaggerUi = require("swagger-ui-express");
-const swaggerSpec = require("./swagger");
-
-// Rotas
-const sparePartRoutes = require("./routes/sparePartRoutes");
-const azelerSyncRoutes = require("./routes/azelerSyncRoutes");
-
-// Handler de Socket
-const socketHandler = require("./realtime/socket");
+const path = require("path");
+const { syncDespiece } = require("./services/syncService.js");
 
 const app = express();
-const server = http.createServer(app);
-const io = new Server(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"],
-  },
+const PORT = 3000;
+
+// Serve arquivos estáticos da pasta "public"
+app.use(express.static(path.join(__dirname, "public")));
+
+// Armazena sincronizações em andamento
+const activeSyncs = new Map();
+
+// Rota GET com Server-Sent Events (SSE) - Recomendado para progresso em tempo real
+app.get("/api/sync/despiece/stream", async (req, res) => {
+  // Configura SSE
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no"); // Nginx compatibility
+  res.flushHeaders();
+
+  const syncId = Date.now().toString();
+  activeSyncs.set(syncId, { status: "running", startTime: new Date() });
+
+  // Funções auxiliares
+  const sendEvent = (data) => {
+    try {
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    } catch (err) {
+      console.error("Erro ao enviar evento SSE:", err);
+    }
+  };
+
+  const sendComment = (text) => {
+    try {
+      res.write(`: ${text}\n\n`);
+    } catch (err) {
+      console.error("Erro ao enviar comentário SSE:", err);
+    }
+  };
+
+  // Heartbeat para evitar timeouts por inatividade (15s)
+  const heartbeat = setInterval(() => {
+    sendComment("ping");
+  }, 15000);
+
+  // Cleanup ao fechar conexão
+  req.on("close", () => {
+    clearInterval(heartbeat);
+    activeSyncs.delete(syncId);
+    console.log(`[SSE] Cliente desconectou. SyncId: ${syncId}`);
+  });
+
+  try {
+    // Mensagem imediata para o cliente não considerar "sem resposta"
+    sendEvent({
+      status: "connected",
+      syncId,
+      message: "Conexão SSE estabelecida. Iniciando sincronização...",
+      timestamp: new Date().toISOString(),
+    });
+
+    await syncDespiece({
+      saveToFile: true,
+      outputPath: `despiece_${syncId}.ndjson`,
+      onProgress: (progress) => {
+        // Remove items do payload SSE para evitar payloads muito grandes
+        const { items, ...progressWithoutItems } = progress;
+        sendEvent({
+          ...progressWithoutItems,
+          syncId,
+          itemCount: items?.length || 0,
+        });
+      },
+    });
+
+    clearInterval(heartbeat);
+    sendEvent({
+      status: "completed",
+      syncId,
+      message: "Sincronização concluída com sucesso",
+      timestamp: new Date().toISOString(),
+    });
+    activeSyncs.delete(syncId);
+    res.end();
+  } catch (error) {
+    clearInterval(heartbeat);
+    sendEvent({
+      status: "error",
+      syncId,
+      error: error.message,
+      timestamp: new Date().toISOString(),
+    });
+    activeSyncs.delete(syncId);
+    res.end();
+  }
 });
 
-// ==== Middlewares Globais ====
-app.use(cors());
-app.use(express.json());
-app.use(express.static("public"));
+// Rota GET tradicional - Retorna resultado completo ao final
+app.get("/api/sync/despiece", async (req, res) => {
+  try {
+    const result = await syncDespiece({
+      saveToFile: false,
+    });
 
-// ==== Socket.IO ====
-socketHandler(io);
-app.set("io", io);
+    res.json({
+      success: true,
+      totalProcessed: result.totalProcessed,
+      message: "Sincronização concluída",
+      dataCount: result.data.length,
+      timestamp: new Date().toISOString(),
+      // data: result.data // Descomente se quiser retornar tudo (cuidado com tamanho)
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
 
-// ==== Swagger ====
-app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+// Rota GET com paginação - Retorna apenas uma página específica
+app.get("/api/sync/despiece/page/:pageNum", async (req, res) => {
+  try {
+    const pageNum = parseInt(req.params.pageNum) || 1;
+    let pageData = null;
 
-// ==== Rotas principais (com prefixos claros) ====
-app.use("/api/spare-parts", sparePartRoutes);
-app.use("/api/azeler-sync", azelerSyncRoutes);
+    await syncDespiece({
+      saveToFile: false,
+      onProgress: (progress) => {
+        if (progress.currentPage === pageNum) {
+          pageData = progress;
+        }
+      },
+    });
 
-// ==== Health check ====
-app.get("/health", (req, res) => {
+    if (pageData) {
+      res.json({
+        success: true,
+        page: pageData.currentPage,
+        totalPages: pageData.lastPage,
+        items: pageData.items,
+        totalProcessed: pageData.totalProcessed,
+        timestamp: new Date().toISOString(),
+      });
+    } else {
+      res.status(404).json({
+        success: false,
+        error: "Página não encontrada",
+        timestamp: new Date().toISOString(),
+      });
+    }
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
+// Rota para verificar sincronizações ativas
+app.get("/api/sync/status", (req, res) => {
+  const syncs = Array.from(activeSyncs.entries()).map(([id, data]) => ({
+    syncId: id,
+    ...data,
+    duration: Date.now() - new Date(data.startTime).getTime(),
+  }));
+
   res.json({
-    status: "OK",
+    activeSyncs: syncs.length,
+    syncs,
     timestamp: new Date().toISOString(),
   });
 });
 
-// ==== Middleware de erro global ====
-app.use((err, req, res, next) => {
-  console.error("❌ Erro não tratado:", err);
-  res.status(500).json({
-    success: false,
-    error: "Erro interno no servidor",
-    message: err.message,
-  });
+// Configurações de timeout do servidor
+const server = app.listen(PORT, () => {
+  console.log(`🚀 Servidor rodando em http://localhost:${PORT}`);
+  console.log(`🏠 Interface SSE: http://localhost:${PORT}/`);
+  console.log(
+    `📊 SSE Stream: http://localhost:${PORT}/api/sync/despiece/stream`
+  );
+  console.log(`📦 Sync completo: http://localhost:${PORT}/api/sync/despiece`);
+  console.log(
+    `📄 Sync por página: http://localhost:${PORT}/api/sync/despiece/page/1`
+  );
+  console.log(`📈 Status: http://localhost:${PORT}/api/sync/status`);
 });
 
-const PORT = process.env.PORT || 3000;
-
-async function startServer() {
-  try {
-    server.listen(PORT, () => {
-      console.log(`🚀 Servidor rodando em http://localhost:${PORT}`);
-      console.log(`🌐 WebSocket em ws://localhost:${PORT}`);
-      console.log(`📖 Swagger disponível em http://localhost:${PORT}/api-docs`);
-
-      console.log("\n=== Rotas Principais ===");
-      console.log(`GET  /api/spare-parts/by-matricula/:matriculas`);
-      console.log(
-        `GET  /api/spare-parts/by-matricula?matriculas=AAA1111,BBB2222`
-      );
-      console.log(`POST /api/spare-parts/processar`);
-      console.log(`GET  /api/spare-parts/images/:idPiezaDesp`);
-      console.log(`GET  /api/spare-parts/stats`);
-      console.log(`GET  /api/spare-parts/low-stock`);
-      console.log(`POST /api/spare-parts/sync-single`);
-      console.log(`POST /api/spare-parts/insert | update | delete`);
-      console.log(`PUT  /api/spare-parts/update-stock/:id`);
-      console.log(`\n[Azeler Sync] /api/azeler-sync/*`);
-    });
-  } catch (error) {
-    console.error("❌ Erro ao iniciar servidor:", error);
-    process.exit(1);
-  }
-}
-
-startServer();
-
-module.exports = app;
+// Aumenta timeouts para suportar conexões SSE longas
+server.keepAliveTimeout = 120 * 1000; // 120 segundos
+server.headersTimeout = 125 * 1000; // Deve ser maior que keepAliveTimeout

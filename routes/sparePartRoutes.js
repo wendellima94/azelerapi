@@ -84,7 +84,8 @@ router.get("/by-matricula", async (req, res) => {
     console.log(">>> req.params:", req.params);
     console.log(">>> req.body:", req.body);
 
-    const matriculas = req.query.matriculas || req.params.matriculas || req.body.matriculas;
+    const matriculas =
+      req.query.matriculas || req.params.matriculas || req.body.matriculas;
 
     if (!matriculas) {
       return res.status(400).json({
@@ -128,7 +129,7 @@ router.get("/images/:idPiezaDesp", async (req, res) => {
  */
 router.get("/stats", async (req, res) => {
   try {
-    const stats = await azelerApiService.obterEstatisticas();
+    const stats = await azelerApiService.obterEstatisticas(() => null);
     res.json({ success: true, stats });
   } catch (err) {
     console.error("❌ Erro rota stats:", err.message);
@@ -143,7 +144,7 @@ router.get("/stats", async (req, res) => {
  */
 router.get("/low-stock", async (req, res) => {
   try {
-    const lowStock = await lowStockService.obterEstoqueBaixo();
+    const lowStock = await lowStockService.obterEstoqueBaixo(() => null);
     res.json({ success: true, total: lowStock.length, items: lowStock });
   } catch (err) {
     console.error("❌ Erro rota low-stock:", err.message);

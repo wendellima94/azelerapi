@@ -11,17 +11,17 @@ const config = {
     encrypt: true,
     trustServerCertificate: true,
   },
-  requestTimeout: 60000, // 60 segundos
-  connectionTimeout: 30000, // 30 segundos
+  requestTimeout: 60000,
+  connectionTimeout: 30000, 
 };
+
 class DatabaseAnalyzer {
   async analisarBanco() {
     try {
       console.log("\n🔍 Iniciando análise do banco INNOVA...");
 
-      await sql.connect(config); // <-- Passa a config aqui
+      await sql.connect(config); 
 
-      // 1. Listar todas as tabelas
       console.log("\n=== 1. TABELAS DO BANCO ===");
       const tabelas = await sql.query(`
         SELECT 
