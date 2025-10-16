@@ -1,13 +1,14 @@
 const axios = require("axios");
+const desguacesApi = require("./desguacesApiClient");
 
-// Configurações da API externa
+// Configurações da API Azeler
 const API_CONFIG = {
   baseURL: "https://pre-apiapp.azelerecambios.com/api",
   username: "API_INNOVA",
   password: "TestInnova",
 };
 
-// Função para gerar o token Base64
+// Função utilitária para gerar token Basic Auth
 function generateAuthToken(username, password) {
   const credentials = `${username}:${password}`;
   return Buffer.from(credentials).toString("base64");
@@ -27,9 +28,8 @@ function getRequestConfig(method, endpoint, data = null) {
   };
 }
 
-// Serviços da API
 const azelerApiService = {
-  // Buscar todos os IDs
+  // Buscar IDs de peças
   async getAllIds() {
     const config = getRequestConfig("GET", "/v1/spareParts/GetAllIds");
     const response = await axios(config);
@@ -47,7 +47,7 @@ const azelerApiService = {
   async updateSparePart(data) {
     const config = getRequestConfig("POST", "/v1/spareParts/Update", data);
     const response = await axios(config);
-    return response; // Retorne o objeto completo do Axios!
+    return response.data;
   },
 
   // Deletar peça
@@ -57,53 +57,45 @@ const azelerApiService = {
     return response.data;
   },
 
+  // Atualizar status de 1 produto
   async updateProductStatus(warehouseID, localProductData) {
-    try {
-      const azelerUpdateData = {
-        warehouseID: warehouseID,
-        stock: localProductData.stock,
-        price: localProductData.price,
-        status: localProductData.status,
-        isActive: localProductData.stock > 0,
-        partDescription: localProductData.partDescription,
-        updated_at: new Date().toISOString(),
-      };
+    const azelerUpdateData = {
+      warehouseID,
+      stock: localProductData.stock || 0,
+      price: localProductData.price || 0.0,
+      status: localProductData.status || "ACTIVE",
+      isActive: (localProductData.stock || 0) > 0,
+      partDescription:
+        localProductData.descricao || localProductData.partDescription,
+      updated_at: new Date().toISOString(),
+    };
 
-      const config = getRequestConfig(
-        "POST",
-        "/v1/spareParts/UpdateStatus",
-        azelerUpdateData
-      );
-      const response = await axios(config);
-      return response.data;
-    } catch (error) {
-      console.error(
-        `Error en la atualizacion de status en Azeler para warehouse ID ${warehouseID}:`,
-        error.message
-      );
-      throw error;
-    }
+    const config = getRequestConfig(
+      "POST",
+      "/v1/spareParts/UpdateStatus",
+      azelerUpdateData
+    );
+    const response = await axios(config);
+
+    return response.data;
   },
 
+  // Atualizar múltiplos produtos (chunked)
   async updateMultipleProductStatus(productUpdates) {
-    try {
-      const results = [];
+    const results = [];
+    const chunkSize = 10;
 
-      const chunkSize = 10;
-      for (let i = 0; i < productUpdates.length; i += chunkSize) {
-        const chunk = productUpdates.slice(i, i + chunkSize);
+    for (let i = 0; i < productUpdates.length; i += chunkSize) {
+      const chunk = productUpdates.slice(i, i + chunkSize);
 
-        const chunkPromises = chunk.map(async (product) => {
+      const chunkResults = await Promise.all(
+        chunk.map(async (product) => {
           try {
             const result = await this.updateProductStatus(
               product.warehouseID,
               product
             );
-            return {
-              warehouseID: product.warehouseID,
-              sucess: true,
-              result: result,
-            };
+            return { warehouseID: product.warehouseID, success: true, result };
           } catch (error) {
             return {
               warehouseID: product.warehouseID,
@@ -111,34 +103,31 @@ const azelerApiService = {
               error: error.message,
             };
           }
-        });
-
-        const chunkResults = await Promise.all(chunkPromises);
-        result.push(...chunkResults);
-
-        //pausa entre chunks
-        if (i + chunkSize < productUpdates.length) {
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-        }
-      }
-
-      return results;
-    } catch (error) {
-      console.error(
-        "Erro ao atualizar multiplos produtos no azeler:",
-        error.message
+        })
       );
-      throw error;
+
+      results.push(...chunkResults);
+
+      if (i + chunkSize < productUpdates.length) {
+        await new Promise((res) => setTimeout(res, 1000));
+      }
     }
+
+    return results;
   },
 
-  async syncSingleProduct(warehouseID, sparePartModel) {
+  // 🚀 Novo: Sincronizar um produto usando dados do Desguaces API
+  async syncSingleProduct(warehouseID, matricula) {
     try {
-      const localProduct = await sparePartModel.getByWarehouseId(warehouseID);
+      // Busca dados do Desguaces API
+      const pecas = await desguacesApi.obterPecasComImagens(matricula);
 
+      const localProduct = pecas.find(
+        (p) => String(p.idPiezaDesp) === String(warehouseID)
+      );
       if (!localProduct) {
         throw new Error(
-          `Produto com warehouse ID ${warehouseID} nao encontrado no banco local`
+          `Produto com warehouseID=${warehouseID} não encontrado no Desguaces`
         );
       }
 
@@ -148,9 +137,9 @@ const azelerApiService = {
       );
 
       return {
-        warehouseID: warehouseID,
+        warehouseID,
         localData: localProduct,
-        azelerResult: azelerResult,
+        azelerResult,
         syncedAt: new Date().toISOString(),
       };
     } catch (error) {

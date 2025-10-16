@@ -1,270 +1,102 @@
-const azelerSyncModel = require("../models/azelerSyncModel");
+const desguacesApi = require("./desguacesApiClient");
 const { azelerApiService } = require("./azelerApiService");
+const lowStockService = require("./lowStockService");
 
-class AzelerAutoSyncService {
-  constructor() {
-    this.isRunning = false;
-    this.syncInterval = null;
-    this.lastSyncDate = new Date(Date.now() - 24 * 60 * 60 * 1000); // 24h atrás
-    this.SYNC_INTERVAL_MS = 30000;
-    this.BATCH_SIZE = 10; 
-    this.EXTERNAL_PLATFORM_NAME = "DesguacesGP";
-  }
-
+const azelerAutoSyncService = {
   /**
-   * Inicia a sincronização automática
+   * Sincroniza em lote todos os produtos da Desguaces → Azeler
+   * @param {string} matriculas - lista de matrículas separadas por vírgula
    */
-  start(io = null) {
-    if (this.isRunning) {
-      console.log("⚠️ Sincronização já está rodando");
-      return;
-    }
-
-    this.isRunning = true;
-    console.log("🚀 Iniciando sincronização automática com Azeler...");
-
-    // Primeira execução imediata
-    this.performSync(io);
-
-    // Configura execução periódica
-    this.syncInterval = setInterval(() => {
-      this.performSync(io);
-    }, this.SYNC_INTERVAL_MS);
-  }
-
-  /**
-   * Para a sincronização automática
-   */
-  stop() {
-    if (this.syncInterval) {
-      clearInterval(this.syncInterval);
-      this.syncInterval = null;
-    }
-    this.isRunning = false;
-    console.log("⏹️ Sincronização automática parada");
-  }
-
-  /**
-   * Executa uma rodada de sincronização
-   */
-  async performSync(io = null) {
+  async syncAllProducts(matriculas = "") {
     try {
-      console.log("🔄 Iniciando ciclo de sincronização...");
+      console.log("🔄 Iniciando sync automático Desguaces → Azeler...");
 
-      // Busca produtos atualizados desde a última sincronização
-      const updatedProducts = await azelerSyncModel.getUpdatedProductsSince(
-        this.lastSyncDate
-      );
+      // 1. Busca peças no Desguaces API (fonte oficial agora)
+      const pecas = await desguacesApi.obterPecasComImagens(matriculas);
+      console.log(`📦 Total peças encontradas no Desguaces: ${pecas.length}`);
 
-      if (updatedProducts.length === 0) {
-        console.log("✅ Nenhum produto para sincronizar");
-        return;
+      if (!pecas.length) {
+        return {
+          success: false,
+          message: "Nenhuma peça encontrada no Desguaces API",
+        };
       }
+
+      // 2. Atualiza no Azeler em chunks
+      const produtoMap = pecas.map((p) => ({
+        warehouseID: p.idPiezaDesp,
+        partDescription: p.descricao,
+        stock: p.stock || 0,
+        price: p.preco || 0.0,
+        status: (p.stock || 0) > 0 ? "ACTIVE" : "INACTIVE",
+        isActive: (p.stock || 0) > 0,
+        marca: p.marca,
+        modelo: p.modelo,
+        modelo_limpo: p.modelo_limpo,
+        imagens: p.imagens || [],
+      }));
+
+      const results = await azelerApiService.updateMultipleProductStatus(
+        produtoMap
+      );
 
       console.log(
-        `📦 Encontrados ${updatedProducts.length} produtos para sincronizar`
+        `✅ Sync concluída: ${results.filter((r) => r.success).length} ok, ${
+          results.filter((r) => !r.success).length
+        } falhas`
       );
 
-      // Processa em lotes para não sobrecarregar a API
-      const batches = this.createBatches(updatedProducts, this.BATCH_SIZE);
-      let successCount = 0;
-      let errorCount = 0;
-
-      for (let i = 0; i < batches.length; i++) {
-        const batch = batches[i];
-        console.log(
-          `🔄 Processando lote ${i + 1}/${batches.length} (${
-            batch.length
-          } produtos)`
-        );
-
-        const results = await this.processBatch(batch);
-        successCount += results.success;
-        errorCount += results.errors;
-
-        // Pausa entre lotes para não sobrecarregar a API
-        if (i < batches.length - 1) {
-          await this.sleep(1000); // 1 segundo entre lotes
-        }
-      }
-
-      // Atualiza a data da última sincronização
-      this.lastSyncDate = new Date();
-
-      const syncResult = {
-        timestamp: this.lastSyncDate.toISOString(),
-        totalProcessed: updatedProducts.length,
-        successful: successCount,
-        errors: errorCount,
-        batches: batches.length,
+      return {
+        success: true,
+        synced: results.filter((r) => r.success).length,
+        failed: results.filter((r) => !r.success).length,
+        details: results,
       };
-
-      console.log(
-        `✅ Sincronização concluída: ${successCount}/${updatedProducts.length} produtos sincronizados`
-      );
-
-      // Emite resultado via WebSocket se disponível
-      if (io) {
-        io.emit("azeler-auto-sync-result", syncResult);
-      }
-
-      return syncResult;
     } catch (error) {
-      console.error("❌ Erro na sincronização automática:", error);
-
-      if (io) {
-        io.emit("azeler-auto-sync-error", {
-          timestamp: new Date().toISOString(),
-          error: error.message,
-        });
-      }
+      console.error("❌ Falha na sync automática:", error.message);
+      return { success: false, error: error.message };
     }
-  }
+  },
 
   /**
-   * Processa um lote de produtos
+   * Sincroniza apenas um produto específico
    */
-  async processBatch(products) {
-    let successCount = 0;
-    let errorCount = 0;
-
-    for (const product of products) {
-      try {
-        const azelerPayload = this.transformToAzelerFormat(product);
-        const response = await azelerApiService.updateSparePart(azelerPayload);
-        console.log(
-          `✅ Produto ${product.warehouseID} | Status HTTP: ${
-            response.status
-          } | Resposta Azeler: ${JSON.stringify(response.data)}`
-        );
-        successCount++;
-      } catch (error) {
-        errorCount++;
-        if (error.response) {
-          // Erro HTTP da Azeler
-          console.error(
-            `❌ Erro ao sincronizar produto ${
-              product.warehouseID
-            } | Status HTTP: ${
-              error.response.status
-            } | Resposta Azeler: ${JSON.stringify(error.response.data)}`
-          );
-        } else {
-          // Erro de rede ou outro
-          console.error(
-            `❌ Erro ao sincronizar produto ${product.warehouseID}: ${error.message}`
-          );
-        }
-      }
-    }
-
-    return { success: successCount, errors: errorCount };
-  }
+  async syncSingleProduct(warehouseID, matricula) {
+    return await azelerApiService.syncSingleProduct(warehouseID, matricula);
+  },
 
   /**
-   * Transforma o produto do formato do banco para o formato da Azeler
+   * Sincroniza produtos com estoque crítico (zero) — exemplo de uso otimizado
    */
-  transformToAzelerFormat(product) {
-    return {
-      warehouseID: product.warehouseID,
-      externalPlatformName: this.EXTERNAL_PLATFORM_NAME,
-      partDescription: product.partDescription,
-      price: parseFloat(product.price) || 0.0,
-      quantity: parseInt(product.quantity) || 0,
-      vehicleType: 4, // Valor padrão conforme documentação
-    };
-  }
-
-  /**
-   * Divide array em lotes menores
-   */
-  createBatches(array, batchSize) {
-    const batches = [];
-    for (let i = 0; i < array.length; i += batchSize) {
-      batches.push(array.slice(i, i + batchSize));
-    }
-    return batches;
-  }
-
-  /**
-   * Função utilitária para pausas
-   */
-  sleep(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-  }
-
-  /**
-   * Sincronização manual (força sincronização de todos os produtos)
-   */
-  async forceFullSync(io = null) {
-    try {
-      console.log("🔄 Iniciando sincronização completa forçada...");
-
-      const allProducts = await azelerSyncModel.getAllStoredProducts();
-      console.log(
-        `📦 Encontrados ${allProducts.length} produtos para sincronização completa`
-      );
-
-      if (allProducts.length === 0) {
-        return { message: "Nenhum produto encontrado para sincronizar" };
-      }
-
-      const batches = this.createBatches(allProducts, this.BATCH_SIZE);
-      let successCount = 0;
-      let errorCount = 0;
-
-      for (let i = 0; i < batches.length; i++) {
-        const batch = batches[i];
-        console.log(`🔄 Processando lote ${i + 1}/${batches.length}`);
-
-        const results = await this.processBatch(batch);
-        successCount += results.success;
-        errorCount += results.errors;
-
-        // Pausa entre lotes
-        if (i < batches.length - 1) {
-          await this.sleep(2000); // 2 segundos para sync completa
-        }
-      }
-
-      const result = {
-        timestamp: new Date().toISOString(),
-        totalProcessed: allProducts.length,
-        successful: successCount,
-        errors: errorCount,
-        type: "full_sync",
+  async syncCriticalStock(matriculas = "") {
+    const criticalParts = await lowStockService.fetchCriticalStock(matriculas);
+    if (!criticalParts.length) {
+      return {
+        success: true,
+        synced: 0,
+        message: "Nenhum produto crítico para sincronizar",
       };
-
-      console.log(
-        `✅ Sincronização completa finalizada: ${successCount}/${allProducts.length} produtos`
-      );
-
-      if (io) {
-        io.emit("azeler-full-sync-result", result);
-      }
-
-      return result;
-    } catch (error) {
-      console.error("❌ Erro na sincronização completa:", error);
-      throw error;
     }
-  }
 
-  /**
-   * Retorna status da sincronização
-   */
-  getStatus() {
+    const produtoMap = criticalParts.map((p) => ({
+      warehouseID: p.idPiezaDesp,
+      stock: 0,
+      price: p.preco || 0,
+      status: "INACTIVE",
+      isActive: false,
+      partDescription: p.descricao,
+    }));
+
+    const results = await azelerApiService.updateMultipleProductStatus(
+      produtoMap
+    );
+
     return {
-      isRunning: this.isRunning,
-      lastSyncDate: this.lastSyncDate.toISOString(),
-      syncIntervalMs: this.SYNC_INTERVAL_MS,
-      batchSize: this.BATCH_SIZE,
-      externalPlatformName: this.EXTERNAL_PLATFORM_NAME,
+      success: true,
+      synced: results.filter((r) => r.success).length,
+      failed: results.filter((r) => !r.success).length,
     };
-  }
-}
-
-// Singleton instance
-const azelerAutoSyncService = new AzelerAutoSyncService();
+  },
+};
 
 module.exports = azelerAutoSyncService;

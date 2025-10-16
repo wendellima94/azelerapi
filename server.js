@@ -6,13 +6,12 @@ const cors = require("cors");
 const swaggerUi = require("swagger-ui-express");
 const swaggerSpec = require("./swagger");
 
-const { testConnection } = require("./config/db");
+// Rotas
 const sparePartRoutes = require("./routes/sparePartRoutes");
-const databaseRoutes = require("./routes/databaseRoutes");
-const socketHandler = require("./realtime/socket");
-const swaggerJSDoc = require("swagger-jsdoc");
 const azelerSyncRoutes = require("./routes/azelerSyncRoutes");
-const azelerAutoSyncService = require("./services/azelerAutoSyncService");
+
+// Handler de Socket
+const socketHandler = require("./realtime/socket");
 
 const app = express();
 const server = http.createServer(app);
@@ -23,72 +22,62 @@ const io = new Server(server, {
   },
 });
 
+// ==== Middlewares Globais ====
 app.use(cors());
 app.use(express.json());
-
-socketHandler(io);
-app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 app.use(express.static("public"));
-app.use("/api", sparePartRoutes);
-app.use("/", databaseRoutes);
 
+// ==== Socket.IO ====
+socketHandler(io);
+app.set("io", io);
+
+// ==== Swagger ====
+app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+
+// ==== Rotas principais (com prefixos claros) ====
+app.use("/api/spare-parts", sparePartRoutes);
+app.use("/api/azeler-sync", azelerSyncRoutes);
+
+// ==== Health check ====
 app.get("/health", (req, res) => {
   res.json({
     status: "OK",
-    message: "Servidor funcionando",
     timestamp: new Date().toISOString(),
   });
 });
 
-// Adicione a nova rota
-app.use("/api/azeler-sync", azelerSyncRoutes);
-
-// Torna o io disponível para as rotas
-app.set("io", io);
-
+// ==== Middleware de erro global ====
 app.use((err, req, res, next) => {
-  console.error("Erro não tratado:", err);
+  console.error("❌ Erro não tratado:", err);
   res.status(500).json({
     success: false,
-    error: "Erro interno do servidor",
-    message: "Ocorreu um erro inesperado",
+    error: "Erro interno no servidor",
+    message: err.message,
   });
 });
 
 const PORT = process.env.PORT || 3000;
 
-
 async function startServer() {
   try {
-    await testConnection();
-
     server.listen(PORT, () => {
-      // Inicia sincronização automática após 5 segundos
-      setTimeout(() => {
-        // azelerAutoSyncService.start(io);
-      }, 5000);
+      console.log(`🚀 Servidor rodando em http://localhost:${PORT}`);
+      console.log(`🌐 WebSocket em ws://localhost:${PORT}`);
+      console.log(`📖 Swagger disponível em http://localhost:${PORT}/api-docs`);
 
-      console.log(`🚀 Servidor rodando na porta ${PORT}`);
-      console.log(`🌐 WebSocket disponível em ws://localhost:${PORT}`);
+      console.log("\n=== Rotas Principais ===");
+      console.log(`GET  /api/spare-parts/by-matricula/:matriculas`);
       console.log(
-        `🔍 Análise do banco disponível em: http://localhost:${PORT}/analise-banco`
+        `GET  /api/spare-parts/by-matricula?matriculas=AAA1111,BBB2222`
       );
-      console.log("POST /api/azeler-sync/start - Iniciar sincronização");
-      console.log("POST /api/azeler-sync/stop - Parar sincronização");
-      console.log("POST /api/azeler-sync/force-full - Sincronização completa");
-      console.log("GET  /api/azeler-sync/status - Status da sincronização");
-
-      console.log("\n=== ROTAS DISPONÍVEIS ===");
-      console.log("GET  /health - Health check");
-      console.log("GET  /analise-banco - Análise visual do banco");
-      console.log("GET  /api/spare-parts/ids - Buscar IDs da API externa");
-      console.log("GET  /api/spare-parts/low-stock - Estoque baixo");
-      console.log("GET  /api/spare-parts/stats - Estatísticas");
-      console.log("GET  /api/spare-parts/sync - Sincronizar com API");
-      console.log("POST /api/spare-parts/insert - Inserir peça");
-      console.log("POST /api/spare-parts/update - Atualizar peça");
-      console.log("POST /api/spare-parts/delete - Deletar peça");
-      console.log("PUT  /api/spare-parts/update-stock/:id - Atualizar estoque");
+      console.log(`POST /api/spare-parts/processar`);
+      console.log(`GET  /api/spare-parts/images/:idPiezaDesp`);
+      console.log(`GET  /api/spare-parts/stats`);
+      console.log(`GET  /api/spare-parts/low-stock`);
+      console.log(`POST /api/spare-parts/sync-single`);
+      console.log(`POST /api/spare-parts/insert | update | delete`);
+      console.log(`PUT  /api/spare-parts/update-stock/:id`);
+      console.log(`\n[Azeler Sync] /api/azeler-sync/*`);
     });
   } catch (error) {
     console.error("❌ Erro ao iniciar servidor:", error);

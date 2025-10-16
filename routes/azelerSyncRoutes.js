@@ -2,103 +2,59 @@ const express = require("express");
 const router = express.Router();
 const azelerAutoSyncService = require("../services/azelerAutoSyncService");
 
-/**
- * @swagger
- * /api/azeler-sync/status:
- *   get:
- *     summary: Obter status da sincronização automática
- *     tags: [AzelerSync]
- *     responses:
- *       200:
- *         description: Status da sincronização
- */
-router.get("/status", (req, res) => {
+// 🚀 Sincronizar todos os produtos (com opção de matrículas específicas)
+router.post("/sync-all", async (req, res) => {
   try {
-    const status = azelerAutoSyncService.getStatus();
-    res.json({
-      success: true,
-      data: status
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    const { matriculas } = req.body; // pode mandar lista separada por vírgula
+    const result = await azelerAutoSyncService.syncAllProducts(
+      matriculas || ""
+    );
+    res.json(result);
+  } catch (err) {
+    console.error("❌ Erro em sync-all:", err.message);
+    res
+      .status(500)
+      .json({ success: false, error: "Erro ao sincronizar todos os produtos" });
   }
 });
 
-/**
- * @swagger
- * /api/azeler-sync/start:
- *   post:
- *     summary: Iniciar sincronização automática
- *     tags: [AzelerSync]
- *     responses:
- *       200:
- *         description: Sincronização iniciada
- */
-router.post("/start", (req, res) => {
+// 🚀 Sincronizar um único produto
+router.post("/sync-single", async (req, res) => {
   try {
-    azelerAutoSyncService.start(req.app.get('io'));
-    res.json({
-      success: true,
-      message: "Sincronização automática iniciada"
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    const { warehouseID, matricula } = req.body;
+    if (!warehouseID || !matricula) {
+      return res.status(400).json({
+        success: false,
+        error: "warehouseID e matricula são obrigatórios",
+      });
+    }
+
+    const result = await azelerAutoSyncService.syncSingleProduct(
+      warehouseID,
+      matricula
+    );
+    res.json(result);
+  } catch (err) {
+    console.error("❌ Erro em sync-single:", err.message);
+    res
+      .status(500)
+      .json({ success: false, error: "Erro ao sincronizar produto único" });
   }
 });
 
-/**
- * @swagger
- * /api/azeler-sync/stop:
- *   post:
- *     summary: Parar sincronização automática
- *     tags: [AzelerSync]
- *     responses:
- *       200:
- *         description: Sincronização parada
- */
-router.post("/stop", (req, res) => {
+// 🚀 Sincronizar apenas estoque crítico (0)
+router.post("/sync-critical", async (req, res) => {
   try {
-    azelerAutoSyncService.stop();
-    res.json({
-      success: true,
-      message: "Sincronização automática parada"
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-/**
- * @swagger
- * /api/azeler-sync/force-full:
- *   post:
- *     summary: Forçar sincronização completa
- *     tags: [AzelerSync]
- *     responses:
- *       200:
- *         description: Sincronização completa executada
- */
-router.post("/force-full", async (req, res) => {
-  try {
-    const result = await azelerAutoSyncService.forceFullSync(req.app.get('io'));
-    res.json({
-      success: true,
-      data: result
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    const { matriculas } = req.body;
+    const result = await azelerAutoSyncService.syncCriticalStock(
+      matriculas || ""
+    );
+    res.json(result);
+  } catch (err) {
+    console.error("❌ Erro em sync-critical:", err.message);
+    res
+      .status(500)
+      .json({ success: false, error: "Erro ao sincronizar estoque crítico" });
   }
 });
 

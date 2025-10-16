@@ -1,650 +1,269 @@
 const express = require("express");
 const router = express.Router();
-const { azelerApiService } = require("../services/azelerApiService");
+const desguacesApiClient = require("../services/desguacesApiClient");
+const azelerApiService = require("../services/azelerApiService");
 const lowStockService = require("../services/lowStockService");
-const sparePartModel = require("../models/sparePartModel");
-
-// ==================== ROTAS ORIGINAIS ====================
 
 /**
- * @swagger
- * /api/spare-parts/ids:
- *   get:
- *     summary: Buscar todos os IDs da API externa
- *     tags: [SpareParts]
- *     responses:
- *       200:
- *         description: IDs de peças obtidos com sucesso
+ * 🔍 Rota de debug parecida com a do Flask (/processar)
+ * POST /api/spare-parts/processar
+ * Body ou Query: { "matriculas": "AAA1111,BBB2222" }
  */
-router.get("/spare-parts/ids", async (req, res) => {
+router.post("/processar", async (req, res) => {
   try {
-    const data = await azelerApiService.getAllIds();
-    res.status(200).json({
-      success: true,
-      data,
-      message: "IDs de peças obtidos com sucesso",
-    });
-  } catch (error) {
-    handleError(error, res);
-  }
-});
+    const matriculas = req.body.matriculas || req.query.matriculas;
 
-/**
- * @swagger
- * /api/spare-parts/insert:
- *   post:
- *     summary: Inserir peça
- *     tags: [SpareParts]
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [warehouseID, partDescription, vehicleType]
- *             properties:
- *               warehouseID:
- *                 type: integer
- *               partDescription:
- *                 type: string
- *               vehicleType:
- *                 type: integer
- *     responses:
- *       200:
- *         description: Peça adicionada à fila de publicação com sucesso
- *       400:
- *         description: Campos obrigatórios ausentes
- */
-router.post("/spare-parts/insert", async (req, res) => {
-  try {
-    const { warehouseID, partDescription, vehicleType } = req.body;
-
-    if (!warehouseID || !partDescription || !vehicleType) {
+    if (!matriculas) {
       return res.status(400).json({
         success: false,
-        error: "Campos obrigatórios ausentes",
-        message: "warehouseID, partDescription e vehicleType são obrigatórios",
+        error: "Parâmetro 'matriculas' é obrigatório",
       });
     }
 
-    const data = await azelerApiService.insertSparePart(req.body);
-    res.status(200).json({
+    const pecas = await desguacesApiClient.obterPecasPorMatricula(matriculas);
+
+    // separa com e sem OEM
+    const comOEM = [];
+    const semOEM = [];
+
+    for (const p of pecas) {
+      if (p.preco === 0.0) {
+        comOEM.push({ ...p });
+        semOEM.push({ ...p });
+      } else {
+        const oem = (p.OEM || "").toLowerCase();
+        if (oem && !["nan", "null", "none"].includes(oem)) {
+          comOEM.push(p);
+        } else {
+          semOEM.push(p);
+        }
+      }
+    }
+
+    return res.json({
       success: true,
-      data,
-      message: "Peça adicionada à fila de publicação com sucesso",
+      total: pecas.length,
+      com_oem: comOEM,
+      sem_oem: semOEM,
     });
-  } catch (error) {
-    handleError(error, res);
+  } catch (err) {
+    console.error("❌ Erro rota /processar:", err.message);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
 /**
- * @swagger
- * /api/spare-parts/update:
- *   post:
- *     summary: Atualizar peça
- *     tags: [SpareParts]
- *     security:
- *         - basicAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [warehouseID, partDescription, vehicleType]
- *             properties:
- *               warehouseID:
- *                 type: integer
- *               partDescription:
- *                 type: string
- *               vehicleType:
- *                 type: integer
- *     responses:
- *       200:
- *         description: Peça adicionada à fila de atualização com sucesso
- *       400:
- *         description: Campos obrigatórios ausentes
+ * 🔍 Busca peças por matrícula (via parâmetro)
+ * GET /api/spare-parts/by-matricula/:matriculas
  */
-
-
-router.post("/spare-parts/update", async (req, res) => {
+router.get("/by-matricula/:matriculas", async (req, res) => {
   try {
-    const { warehouseID, partDescription, vehicleType } = req.body;
-
-    if (!warehouseID || !partDescription || !vehicleType) {
+    const matriculas = req.params.matriculas;
+    if (!matriculas) {
       return res.status(400).json({
         success: false,
-        error: "Campos obrigatórios ausentes",
-        message: "warehouseID, partDescription e vehicleType são obrigatórios",
+        error: "Parâmetro 'matriculas' é obrigatório",
       });
     }
 
-    const data = await azelerApiService.updateSparePart(req.body);
-    res.status(200).json({
-      success: true,
-      data,
-      message: "Peça adicionada à fila de atualização com sucesso",
-    });
-  } catch (error) {
-    handleError(error, res);
+    const pecas = await desguacesApiClient.obterPecasPorMatricula(matriculas);
+    res.json({ success: true, total: pecas.length, pecas });
+  } catch (err) {
+    console.error("❌ Erro rota by-matricula (param):", err.message);
+    res.status(500).json({ success: false, error: "Erro ao buscar peças" });
   }
 });
 
 /**
- * @swagger
- * /api/spare-parts/delete:
- *   post:
- *     summary: Deletar peça
- *     tags: [SpareParts]
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [warehouseID, externalPlatformName]
- *             properties:
- *               warehouseID:
- *                 type: integer
- *               externalPlatformName:
- *                 type: string
- *     responses:
- *       200:
- *         description: Peça adicionada à fila de exclusão com sucesso
- *       400:
- *         description: Campos obrigatórios ausentes
+ * 🔍 Busca peças por matrícula (via query string)
+ * GET /api/spare-parts/by-matricula?matriculas=AAA1111,BBB2222
  */
-router.post("/spare-parts/delete", async (req, res) => {
+router.get("/by-matricula", async (req, res) => {
   try {
-    const { warehouseID, externalPlatformName } = req.body;
+    console.log(">>> req.query:", req.query);
+    console.log(">>> req.params:", req.params);
+    console.log(">>> req.body:", req.body);
 
-    if (!warehouseID || !externalPlatformName) {
+    const matriculas = req.query.matriculas || req.params.matriculas || req.body.matriculas;
+
+    if (!matriculas) {
       return res.status(400).json({
         success: false,
-        error: "Campos obrigatórios ausentes",
-        message: "warehouseID e externalPlatformName são obrigatórios",
+        error: "Parâmetro 'matriculas' é obrigatório",
       });
     }
 
-    const data = await azelerApiService.deleteSparePart(req.body);
-    res.status(200).json({
-      success: true,
-      data,
-      message: "Peça adicionada à fila de exclusão com sucesso",
-    });
-  } catch (error) {
-    handleError(error, res);
+    const pecas = await desguacesApiClient.obterPecasPorMatricula(matriculas);
+    res.json({ success: true, total: pecas.length, pecas });
+  } catch (err) {
+    console.error("❌ Erro rota by-matricula (query):", err);
+    res.status(500).json({ success: false, error: "Erro ao buscar peças" });
   }
 });
 
-// ==================== NOVAS ROTAS DE MONITORAMENTO COM PAGINAÇÃO ====================
+/**
+ * 🖼️ Busca imagens de uma peça (Desguaces API)
+ * GET /api/spare-parts/images/:idPiezaDesp
+ */
+router.get("/images/:idPiezaDesp", async (req, res) => {
+  try {
+    const { idPiezaDesp } = req.params;
+    if (!idPiezaDesp) {
+      return res.status(400).json({
+        success: false,
+        error: "Parâmetro 'idPiezaDesp' é obrigatório",
+      });
+    }
+
+    const imagens = await desguacesApiClient.obterImagensPorPeca(idPiezaDesp);
+    res.json({ success: true, total: imagens.length, imagens });
+  } catch (err) {
+    console.error("❌ Erro rota images:", err.message);
+    res.status(500).json({ success: false, error: "Erro ao buscar imagens" });
+  }
+});
 
 /**
- * @swagger
- * /api/spare-parts/critical-stock:
- *   get:
- *     summary: Buscar peças com estoque crítico (0 unidades) - com paginação
- *     tags: [SpareParts]
- *     parameters:
- *       - in: query
- *         name: page
- *         schema:
- *           type: integer
- *         description: Página
- *       - in: query
- *         name: limit
- *         schema:
- *           type: integer
- *         description: Limite por página
- *     responses:
- *       200:
- *         description: Peças com estoque crítico (0 unidades)
+ * 📊 Estatísticas gerais (Azeler API)
  */
-router.get("/spare-parts/critical-stock", async (req, res) => {
+router.get("/stats", async (req, res) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 20;
+    const stats = await azelerApiService.obterEstatisticas();
+    res.json({ success: true, stats });
+  } catch (err) {
+    console.error("❌ Erro rota stats:", err.message);
+    res
+      .status(500)
+      .json({ success: false, error: "Erro ao obter estatísticas" });
+  }
+});
 
-    const result = await lowStockService.getLowStockWithPagination(
-      0,
-      page,
-      limit
+/**
+ * 📉 Estoque baixo
+ */
+router.get("/low-stock", async (req, res) => {
+  try {
+    const lowStock = await lowStockService.obterEstoqueBaixo();
+    res.json({ success: true, total: lowStock.length, items: lowStock });
+  } catch (err) {
+    console.error("❌ Erro rota low-stock:", err.message);
+    res
+      .status(500)
+      .json({ success: false, error: "Erro ao obter estoque baixo" });
+  }
+});
+
+/**
+ * 🔄 Sincronizar produto único com Azeler
+ */
+router.post("/sync-single", async (req, res) => {
+  try {
+    const { warehouseID, matricula } = req.body;
+    if (!warehouseID || !matricula) {
+      return res.status(400).json({
+        success: false,
+        error: "warehouseID e matricula são obrigatórios",
+      });
+    }
+
+    const result = await azelerApiService.sincronizarProdutoUnico(
+      warehouseID,
+      matricula
     );
-
-    res.json({
-      success: true,
-      data: result.data,
-      pagination: result.pagination,
-      count: result.data.length,
-      message: "Peças com estoque crítico (0 unidades)",
-    });
-  } catch (error) {
-    handleError(error, res);
+    res.json(result);
+  } catch (err) {
+    console.error("❌ Erro rota sync-single:", err.message);
+    res
+      .status(500)
+      .json({ success: false, error: "Erro ao sincronizar produto" });
   }
 });
 
 /**
- * @swagger
- * /api/spare-parts/low-stock:
- *   get:
- *     summary: Buscar peças com estoque baixo (customizável) - com paginação
- *     tags: [SpareParts]
- *     parameters:
- *       - in: query
- *         name: threshold
- *         schema:
- *           type: integer
- *         description: Valor máximo de estoque para considerar baixo
- *       - in: query
- *         name: page
- *         schema:
- *           type: integer
- *         description: Página
- *       - in: query
- *         name: limit
- *         schema:
- *           type: integer
- *         description: Limite por página
- *     responses:
- *       200:
- *         description: Peças com estoque baixo
+ * ➕ Inserir peça
  */
-router.get("/spare-parts/low-stock", async (req, res) => {
+router.post("/insert", async (req, res) => {
   try {
-    const threshold = parseInt(req.query.threshold) || 0;
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 20;
-
-    const result = await lowStockService.getLowStockWithPagination(
-      threshold,
-      page,
-      limit
-    );
-
-    res.json({
-      success: true,
-      data: result.data,
-      pagination: result.pagination,
-      count: result.data.length,
-      threshold,
-      message:
-        threshold === 0
-          ? "Peças sem estoque"
-          : `Peças com estoque <= ${threshold}`,
-    });
-  } catch (error) {
-    handleError(error, res);
-  }
-});
-
-/**
- * @swagger
- * /api/spare-parts/sync:
- *   get:
- *     summary: Sincronizar com API externa
- *     tags: [SpareParts]
- *     responses:
- *       200:
- *         description: Sincronização concluída
- */
-router.get("/spare-parts/sync", async (req, res) => {
-  try {
-    const syncResult = await lowStockService.syncWithAzelerApi();
-    res.json({
-      success: true,
-      data: syncResult,
-      message: "Sincronização concluída",
-    });
-  } catch (error) {
-    handleError(error, res);
-  }
-});
-
-/**
- * @swagger
- * /api/spare-parts/stats:
- *   get:
- *     summary: Estatísticas de estoque
- *     tags: [SpareParts]
- *     responses:
- *       200:
- *         description: Estatísticas retornadas
- */
-router.get("/spare-parts/stats", async (req, res) => {
-  try {
-    const stats = await lowStockService.getStats();
-    res.json({
-      success: true,
-      data: stats,
-    });
-  } catch (error) {
-    handleError(error, res);
-  }
-});
-
-/**
- * @swagger
- * /api/spare-parts/check-stock/{warehouseID}:
- *   get:
- *     summary: Verificar estoque de uma peça específica
- *     tags: [SpareParts]
- *     parameters:
- *       - in: path
- *         name: warehouseID
- *         required: true
- *         schema:
- *           type: integer
- *         description: WarehouseID da peça
- *     responses:
- *       200:
- *         description: Dados da peça e status de estoque
- *       404:
- *         description: Peça não encontrada
- */
-router.get("/spare-parts/check-stock/:warehouseID", async (req, res) => {
-  try {
-    const { warehouseID } = req.params;
-    const part = await sparePartModel.getByWarehouseId(parseInt(warehouseID));
-
-    if (!part) {
-      return res.status(404).json({
+    const peca = req.body;
+    if (!peca || !peca.idPiezaDesp) {
+      return res.status(400).json({
         success: false,
-        message: "Peça não encontrada",
+        error: "Dados da peça são obrigatórios",
       });
     }
 
-    // Nova lógica: apenas 0 é crítico
-    let status;
-    let statusMessage;
-
-    if (part.stock === 0) {
-      status = "CRITICO";
-      statusMessage = "Sem estoque - ATENÇÃO NECESSÁRIA";
-    } else if (part.stock === 1) {
-      status = "NORMAL";
-      statusMessage = "Estoque normal para seu negócio";
-    } else {
-      status = "ALTO";
-      statusMessage = "Estoque acima do normal";
-    }
-
-    res.json({
-      success: true,
-      data: part,
-      status,
-      statusMessage,
-      alert: part.stock === 0 ? "ALERTA: Peça sem estoque!" : null,
-    });
-  } catch (error) {
-    handleError(error, res);
+    const result = await azelerApiService.inserirPeca(peca);
+    res.json(result);
+  } catch (err) {
+    console.error("❌ Erro rota insert:", err.message);
+    res.status(500).json({ success: false, error: "Erro ao inserir peça" });
   }
 });
 
 /**
- * @swagger
- * /api/spare-parts/update-stock/{warehouseID}:
- *   put:
- *     summary: Atualizar estoque de uma peça
- *     tags: [SpareParts]
- *     parameters:
- *       - in: path
- *         name: warehouseID
- *         required: true
- *         schema:
- *           type: integer
- *         description: WarehouseID da peça
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [stock]
- *             properties:
- *               stock:
- *                 type: integer
- *     responses:
- *       200:
- *         description: Estoque atualizado com sucesso
- *       404:
- *         description: Peça não encontrada
+ * ✏️ Atualizar peça
  */
-router.put("/spare-parts/update-stock/:warehouseID", async (req, res) => {
+router.post("/update", async (req, res) => {
   try {
-    const { warehouseID } = req.params;
+    const { warehouseID, peca } = req.body;
+    if (!warehouseID || !peca) {
+      return res.status(400).json({
+        success: false,
+        error: "warehouseID e peca são obrigatórios",
+      });
+    }
+
+    const result = await azelerApiService.atualizarPeca(warehouseID, peca);
+    res.json(result);
+  } catch (err) {
+    console.error("❌ Erro rota update:", err.message);
+    res.status(500).json({ success: false, error: "Erro ao atualizar peça" });
+  }
+});
+
+/**
+ * 🗑️ Deletar peça
+ */
+router.post("/delete", async (req, res) => {
+  try {
+    const { warehouseID } = req.body;
+    if (!warehouseID) {
+      return res.status(400).json({
+        success: false,
+        error: "warehouseID é obrigatório",
+      });
+    }
+
+    const result = await azelerApiService.deletarPeca(warehouseID);
+    res.json(result);
+  } catch (err) {
+    console.error("❌ Erro rota delete:", err.message);
+    res.status(500).json({ success: false, error: "Erro ao deletar peça" });
+  }
+});
+
+/**
+ * 📦 Atualizar estoque
+ */
+router.put("/update-stock/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
     const { stock } = req.body;
-
-    if (stock === undefined || stock < 0) {
+    if (!id || stock === undefined) {
       return res.status(400).json({
         success: false,
-        message: "Stock deve ser um número >= 0",
+        error: "ID e stock são obrigatórios",
       });
     }
 
-    const updated = await sparePartModel.updateStock(
-      parseInt(warehouseID),
-      stock
-    );
-
-    if (!updated) {
-      return res.status(404).json({
-        success: false,
-        message: "Peça não encontrada",
-      });
-    }
-
-    // Determina o status após atualização
-    let statusMessage;
-    if (stock === 0) {
-      statusMessage = "ATENÇÃO: Estoque zerado!";
-    } else if (stock === 1) {
-      statusMessage = "Estoque normal (1 unidade)";
-    } else {
-      statusMessage = `Estoque alto (${stock} unidades)`;
-    }
-
-    res.json({
-      success: true,
-      message: "Estoque atualizado com sucesso",
-      newStock: stock,
-      statusMessage,
-    });
-  } catch (error) {
-    handleError(error, res);
+    const result = await azelerApiService.atualizarEstoque(id, stock);
+    res.json(result);
+  } catch (err) {
+    console.error("❌ Erro rota update-stock:", err.message);
+    res
+      .status(500)
+      .json({ success: false, error: "Erro ao atualizar estoque" });
   }
 });
-
-// ==================== ROTAS ADICIONAIS ÚTEIS COM PAGINAÇÃO ====================
-
-/**
- * @swagger
- * /api/spare-parts/all:
- *   get:
- *     summary: Buscar todas as peças (administração) - com paginação
- *     tags: [SpareParts]
- *     parameters:
- *       - in: query
- *         name: page
- *         schema:
- *           type: integer
- *         description: Página
- *       - in: query
- *         name: limit
- *         schema:
- *           type: integer
- *         description: Limite por página
- *     responses:
- *       200:
- *         description: Todas as peças obtidas com sucesso
- */
-router.get("/spare-parts/all", async (req, res) => {
-  try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 50;
-
-    const result = await lowStockService.getAllPartsWithPagination(page, limit);
-
-    res.json({
-      success: true,
-      data: result.data,
-      pagination: result.pagination,
-      count: result.data.length,
-      message: "Todas as peças obtidas com sucesso",
-    });
-  } catch (error) {
-    handleError(error, res);
-  }
-});
-
-/**
- * @swagger
- * /api/spare-parts/by-status/{status}:
- *   get:
- *     summary: Buscar peças por status (crítico, normal, alto) - com paginação
- *     tags: [SpareParts]
- *     parameters:
- *       - in: path
- *         name: status
- *         required: true
- *         schema:
- *           type: string
- *           enum: [critico, normal, alto]
- *         description: Status do estoque
- *       - in: query
- *         name: page
- *         schema:
- *           type: integer
- *         description: Página
- *       - in: query
- *         name: limit
- *         schema:
- *           type: integer
- *         description: Limite por página
- *     responses:
- *       200:
- *         description: Peças filtradas por status
- *       400:
- *         description: Status inválido
- */
-router.get("/spare-parts/by-status/:status", async (req, res) => {
-  try {
-    const { status } = req.params;
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 20;
-    let result;
-    let message;
-
-    switch (status.toLowerCase()) {
-      case "critico":
-        result = await lowStockService.getLowStockWithPagination(
-          0,
-          page,
-          limit
-        );
-        message = "Peças com estoque crítico (0 unidades)";
-        break;
-      case "normal":
-        // Busca peças com estoque = 1
-        const normalParts = await sparePartModel.getByStockValue(
-          1,
-          page,
-          limit
-        );
-        return res.json({
-          success: true,
-          data: normalParts,
-          count: normalParts.length,
-          message: "Peças com estoque normal (1 unidade)",
-        });
-      case "alto":
-        // Busca peças com estoque > 1
-        const highParts = await sparePartModel.getHighStock(page, limit);
-        return res.json({
-          success: true,
-          data: highParts,
-          count: highParts.length,
-          message: "Peças com estoque alto (> 1 unidade)",
-        });
-      default:
-        return res.status(400).json({
-          success: false,
-          message: "Status inválido. Use: critico, normal ou alto",
-        });
-    }
-
-    res.json({
-      success: true,
-      data: result.data,
-      pagination: result.pagination,
-      count: result.data.length,
-      message,
-    });
-  } catch (error) {
-    handleError(error, res);
-  }
-});
-
-/**
- * @swagger
- * /api/spare-parts/dashboard:
- *   get:
- *     summary: Dashboard resumido de estoque
- *     tags: [SpareParts]
- *     responses:
- *       200:
- *         description: Dashboard obtido com sucesso
- */
-router.get("/spare-parts/dashboard", async (req, res) => {
-  try {
-    const stats = await lowStockService.getStats();
-    const criticalItems = await lowStockService.fetchCriticalStock();
-
-    // Pega apenas os 5 primeiros itens críticos para o dashboard
-    const topCritical = criticalItems.slice(0, 5);
-
-    res.json({
-      success: true,
-      data: {
-        stats,
-        topCriticalItems: topCritical,
-        hasAlerts: criticalItems.length > 0,
-        alertMessage:
-          criticalItems.length > 0
-            ? `${criticalItems.length} peça(s) sem estoque!`
-            : "Todos os estoques OK",
-      },
-      message: "Dashboard obtido com sucesso",
-    });
-  } catch (error) {
-    handleError(error, res);
-  }
-});
-
-// Função auxiliar para tratamento de erros
-function handleError(error, res) {
-  console.error("Erro na requisição:", error.message);
-
-  if (error.response) {
-    res.status(error.response.status).json({
-      success: false,
-      error: "Erro na API externa",
-      details: error.response.data,
-      status: error.response.status,
-    });
-  } else if (error.request) {
-    res.status(500).json({
-      success: false,
-      error: "Erro de conexão com a API",
-      message: "Não foi possível conectar com o servidor externo",
-    });
-  } else {
-    res.status(500).json({
-      success: false,
-      error: "Erro interno do servidor",
-      message: error.message,
-    });
-  }
-}
 
 module.exports = router;
