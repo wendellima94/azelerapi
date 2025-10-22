@@ -1,10 +1,14 @@
-// syncService.js - Serviço de sincronização por fases (CommonJS)
+// syncService.js - Serviço de sincronização por fases + envio para Azeler (CommonJS)
 
 const fs = require("node:fs");
+const readline = require("node:readline");
 const { PassThrough } = require("node:stream");
 const { pipeline } = require("node:stream/promises");
 const { URL } = require("node:url");
 
+// =========================
+// INNOVA (origem) - Config
+// =========================
 const BASE_URL = "https://agw.desguacesgp.es/api/innova";
 const HEADERS = {
   "x-api-token": "LdAgpHwsMhM4NqWjIlRq6bxyLJPfnGMRCxGDze9Nwm0h34C1ra2Aqzan5Z7D",
@@ -15,20 +19,20 @@ const HEADERS = {
 };
 
 const PER_PAGE = 100;
-const MAX_IMAGES_PER_ITEM = 5; 
+const MAX_IMAGES_PER_ITEM = 5;
 
-// Concorrência para imagens reduzida
+// Concorrência para imagens
 const MAX_CONCURRENCY_IMAGES_INITIAL = 3;
 const MAX_CONCURRENCY_IMAGES_MIN = 1;
 const MAX_CONCURRENCY_IMAGES_MAX = 6;
 
-// Timeouts separados
+// Timeouts INNOVA
 const REQUEST_TIMEOUT_MS_PAGE = 45000;
 const REQUEST_TIMEOUT_MS_IMAGES = 60000;
 
-// Retries aumentados
+// Retries INNOVA
 const MAX_RETRIES_PAGE = 5;
-const MAX_RETRIES_IMAGES = 5; // Aumentado para 5 tentativas por item
+const MAX_RETRIES_IMAGES = 5;
 
 // Circuit breaker simples para /gesdoc
 const CB_WINDOW = 30;
@@ -36,18 +40,40 @@ const CB_THRESHOLD_408 = 8;
 const CB_COOLDOWN_MS = 15000;
 
 // Deadlines e timeouts duros
-const IMAGES_PHASE_DEADLINE_MS = 120000; // 2 minutos por página (aumentado)
-const IMAGE_TASK_HARD_TIMEOUT_MS = 20000; // 20s por item (aumentado)
-const SKIP_REST_ON_STALL = false; // Desabilitado para nunca parar
+const IMAGES_PHASE_DEADLINE_MS = 120000;
+const IMAGE_TASK_HARD_TIMEOUT_MS = 20000;
+const SKIP_REST_ON_STALL = false;
 
 let imageConcurrency = MAX_CONCURRENCY_IMAGES_INITIAL;
 const gesdocErrorsWindow = [];
 let cbCoolingDownUntil = 0;
 
+// =========================
+// AZELER (destino) - Config
+// =========================
+const API_CONFIG = {
+  baseURL: "https://pre-apiapp.azelerecambios.com/api",
+  username: "API_INNOVA",
+  password: "TestInnova",
+};
+
+// Enviar por lotes de 5 itens
+const AZELER_BATCH_SIZE = 5;
+const AZELER_REQ_TIMEOUT_MS = 30000; // 30s
+const AZELER_MAX_RETRIES = 5;
+
+// Endpoint correto conforme seu código de exemplo
+const AZELER_ENDPOINT = "/v1/spareParts/Insert";
+
+// Se precisar montar URL de imagens quando só houver "nomFitxer" ou ruta relativa
+const AZELER_IMAGE_BASE = process.env.AZELER_IMAGE_BASE || "";
+
+// =========================
+// Utils
+// =========================
 function now() {
   return Date.now();
 }
-
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -63,13 +89,12 @@ function recordGesdoc408() {
     gesdocErrorsWindow.splice(0, gesdocErrorsWindow.length - 200);
   }
 }
-
 function shouldCooldown() {
   const lastN = gesdocErrorsWindow.slice(-CB_WINDOW);
   return lastN.length >= CB_THRESHOLD_408;
 }
 
-// Helper de timeout duro por promessa
+// Timeout duro por promessa
 function withHardTimeout(promise, ms, label = "task") {
   let timer;
   const timeoutPromise = new Promise((_, reject) => {
@@ -84,6 +109,9 @@ function withHardTimeout(promise, ms, label = "task") {
   ]);
 }
 
+// =========================
+// Fetch com retry (INNOVA)
+// =========================
 async function fetchWithRetry(url, options = {}, maxRetries, timeoutMs) {
   let lastErr;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -136,6 +164,9 @@ async function fetchWithRetry(url, options = {}, maxRetries, timeoutMs) {
   throw lastErr;
 }
 
+// =========================
+// INNOVA - Páginas e Imagens
+// =========================
 async function fetchDespiecePage(urlOrPageNum) {
   const url =
     typeof urlOrPageNum === "number"
@@ -181,15 +212,13 @@ async function fetchImagesForPieza(idPiezaDesp) {
     const json = await res.json();
     const images = Array.isArray(json?.data) ? json.data : [];
 
-    // Ordena com principal primeiro e limita a 5
     const sorted = images.slice().sort((a, b) => {
       const ap = a?.fotprin ? 1 : 0;
       const bp = b?.fotprin ? 1 : 0;
-      return bp - ap; // principal primeiro
+      return bp - ap;
     });
     const limited = sorted.slice(0, MAX_IMAGES_PER_ITEM);
 
-    // Logs detalhados
     if (!limited.length) {
       console.log(`[GESDOC][OK-S/IMG] ${idPiezaDesp}: 0 imagens retornadas`);
     } else {
@@ -203,7 +232,6 @@ async function fetchImagesForPieza(idPiezaDesp) {
       );
     }
 
-    // Normaliza o shape e retorna
     return limited.map((img) => ({
       rutaimgsrvsto: img?.rutaimgsrvsto || null,
       fotprin: !!img?.fotprin,
@@ -266,7 +294,6 @@ function pLimit(maxRef) {
     });
 }
 
-// Fase A: coletar itens (sem imagens) e salvar
 async function collectPageItems(pageJson, pageIndex, writerRaw, onProgress) {
   const items = pageJson.data || [];
 
@@ -288,7 +315,6 @@ async function collectPageItems(pageJson, pageIndex, writerRaw, onProgress) {
   return items;
 }
 
-// Fase B: enriquecer com imagens, concorrência controlada
 async function enrichPageImages(items, pageIndex, writerEnriched, onProgress) {
   const limit = pLimit(() => imageConcurrency);
   console.log(
@@ -303,7 +329,7 @@ async function enrichPageImages(items, pageIndex, writerEnriched, onProgress) {
   const startPhase = now();
   let skipRest = false;
 
-  const tasks = items.map((item, idx) =>
+  const tasks = items.map((item) =>
     limit(async () => {
       if (skipRest) {
         withoutImages++;
@@ -315,17 +341,14 @@ async function enrichPageImages(items, pageIndex, writerEnriched, onProgress) {
         return { ...item, images: [] };
       }
 
-      // deadline da fase (apenas warning, não para)
       const elapsed = now() - startPhase;
       if (elapsed > IMAGES_PHASE_DEADLINE_MS) {
         console.warn(
           `[Images][DEADLINE-WARNING] Página ${pageIndex} excedeu ${IMAGES_PHASE_DEADLINE_MS}ms. Continuando mesmo assim...`
         );
-        // Não ativa skipRest, apenas avisa
       }
 
       const idPiezaDesp = item?.idPiezaDesp || item?.idPiezadesp;
-
       if (!idPiezaDesp) {
         console.log(`[IMG][SKIP] item sem idPiezaDesp`);
         withoutImages++;
@@ -335,7 +358,6 @@ async function enrichPageImages(items, pageIndex, writerEnriched, onProgress) {
       console.log(`[IMG][FETCH] ${idPiezaDesp}: buscando imagens...`);
 
       try {
-        // timeout duro por item (com fallback, não para)
         const images = await withHardTimeout(
           fetchImagesForPieza(idPiezaDesp),
           IMAGE_TASK_HARD_TIMEOUT_MS,
@@ -352,7 +374,6 @@ async function enrichPageImages(items, pageIndex, writerEnriched, onProgress) {
           console.log(`[IMG][S/IMG] ${idPiezaDesp}: nenhuma imagem associada`);
         }
 
-        // Ajuste de concorrência para cima lentamente
         if (
           imageConcurrency < MAX_CONCURRENCY_IMAGES_MAX &&
           now() >= cbCoolingDownUntil
@@ -371,18 +392,14 @@ async function enrichPageImages(items, pageIndex, writerEnriched, onProgress) {
         console.warn(
           `[IMG][ERRO] ${idPiezaDesp}: ${err.message}. Gravando sem imagens e continuando...`
         );
-
-        // Heurística de "stall" (apenas se SKIP_REST_ON_STALL estiver true)
         if (SKIP_REST_ON_STALL && imageConcurrency === 1) {
           const recent = gesdocErrorsWindow.slice(-CB_WINDOW).length;
           if (recent >= CB_THRESHOLD_408) {
             console.warn(
-              `[Images][STALL-WARNING] Página ${pageIndex} aparenta estar travada (conc=1, ${recent} timeouts recentes). Mas continuando mesmo assim...`
+              `[Images][STALL-WARNING] Página ${pageIndex} aparenta estar travada (conc=1, ${recent} timeouts recentes). Continuando...`
             );
-            // Não ativa skipRest, apenas avisa
           }
         }
-
         return { ...item, images: [] };
       } finally {
         processed++;
@@ -402,7 +419,6 @@ async function enrichPageImages(items, pageIndex, writerEnriched, onProgress) {
     })
   );
 
-  // Escreve conforme as tasks terminam; mesmo com erros, conclui
   const results = await Promise.allSettled(tasks);
   for (const r of results) {
     if (r.status === "fulfilled") {
@@ -412,12 +428,8 @@ async function enrichPageImages(items, pageIndex, writerEnriched, onProgress) {
       console.warn(
         `[IMG][TASK-REJECT] ${r.reason?.message || r.reason}. Continuando...`
       );
-      // Grava item sem imagens mesmo em caso de rejeição total
       if (writerEnriched) {
-        const failedItem = items[results.indexOf(r)] || {};
-        writerEnriched.write(
-          JSON.stringify({ ...failedItem, images: [] }) + "\n"
-        );
+        writerEnriched.write(JSON.stringify({ images: [] }) + "\n");
       }
     }
   }
@@ -440,16 +452,420 @@ async function enrichPageImages(items, pageIndex, writerEnriched, onProgress) {
   }
 }
 
-// Função principal por páginas, em duas fases
+// =========================
+// AZELER - Auth e Envio
+// =========================
+function generateAuthToken(username, password) {
+  const credentials = `${username}:${password}`;
+  return Buffer.from(credentials).toString("base64");
+}
+
+function getRequestConfig(method, endpoint, data = null) {
+  const authToken = generateAuthToken(API_CONFIG.username, API_CONFIG.password);
+  const headers = {
+    Authorization: `Basic ${authToken}`,
+    "Content-Type": "application/json",
+    Accept: "application/json",
+    "User-Agent": "AzelerSync/1.0",
+  };
+  const url = `${API_CONFIG.baseURL}${endpoint}`;
+  const body = data ? JSON.stringify(data) : undefined;
+  return { method, url, headers, body };
+}
+
+async function fetchWithRetryAzeler(
+  method,
+  endpoint,
+  data,
+  maxRetries,
+  timeoutMs
+) {
+  let lastErr;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const cfg = getRequestConfig(method, endpoint, data);
+
+      console.log(`[Azeler] Tentativa ${attempt + 1}/${maxRetries + 1}`);
+      console.log(`[Azeler] URL: ${cfg.url}`);
+      console.log(`[Azeler] Method: ${cfg.method}`);
+      console.log(
+        `[Azeler] Payload (primeiros 500 chars):`,
+        JSON.stringify(data).substring(0, 500)
+      );
+
+      const res = await fetch(cfg.url, {
+        method: cfg.method,
+        headers: cfg.headers,
+        body: cfg.body,
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+
+      console.log(`[Azeler] Response Status: ${res.status}`);
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        console.error(`[Azeler] Response Body:`, text.substring(0, 500));
+        const err = new Error(`HTTP ${res.status} - ${text.substring(0, 200)}`);
+        err.status = res.status;
+        throw err;
+      }
+
+      const responseText = await res.text();
+      console.log(`[Azeler] Success Response:`, responseText.substring(0, 500));
+
+      return {
+        status: res.status,
+        data: responseText ? JSON.parse(responseText) : {},
+      };
+    } catch (err) {
+      clearTimeout(timer);
+      lastErr = err;
+      console.error(
+        `[Azeler][Erro] Tentativa ${attempt + 1} falhou:`,
+        err.message
+      );
+
+      if (attempt < maxRetries) {
+        const backoff = Math.min(
+          1000 * Math.pow(2, attempt) + Math.random() * 300,
+          8000
+        );
+        console.warn(
+          `[Azeler][Retry] Aguardando ${backoff}ms antes de tentar novamente...`
+        );
+        await sleep(backoff);
+      }
+    }
+  }
+  throw lastErr;
+}
+
+// Normalização das fotos a partir do seu item enriquecido
+function extractPhotosFromItem(item) {
+  if (!Array.isArray(item.images)) return [];
+  const urls = [];
+  for (const img of item.images.slice(0, MAX_IMAGES_PER_ITEM)) {
+    const ruta = img?.rutaimgsrvsto;
+    const nom = img?.nomFitxer;
+    if (ruta && /^https?:\/\//i.test(ruta)) {
+      urls.push(ruta);
+    } else if (ruta && !/^https?:\/\//i.test(ruta) && AZELER_IMAGE_BASE) {
+      urls.push(
+        AZELER_IMAGE_BASE.replace(/\/+$/, "") + "/" + ruta.replace(/^\/+/, "")
+      );
+    } else if (!ruta && nom && AZELER_IMAGE_BASE) {
+      const ext = (img?.extensio || "").toLowerCase() || "jpg";
+      urls.push(
+        AZELER_IMAGE_BASE.replace(/\/+$/, "") +
+          "/" +
+          `${nom}.${ext.replace(/^\./, "")}`
+      );
+    }
+  }
+  return urls;
+}
+
+// Função auxiliar para extrair dados do campo metadatos
+function parseMetadatos(metadatos) {
+  if (!metadatos || typeof metadatos !== "string") {
+    return { brand: null, model: null, version: null, motor: null };
+  }
+
+  // Exemplo de metadatos: "PEUGEOT 308 1.6 HDI 9HZ"
+  // ou "AUDI A4 AVANT 1.9 TDI AVB"
+  const parts = metadatos.trim().split(/\s+/);
+
+  let brand = null;
+  let model = null;
+  let version = null;
+  let motor = null;
+
+  if (parts.length >= 1) {
+    brand = parts[0]; // Primeira palavra = marca
+  }
+
+  if (parts.length >= 2) {
+    // Se a terceira palavra existe e não começa com número, faz parte do modelo
+    if (parts.length >= 3 && !/^\d/.test(parts[2])) {
+      model = `${parts[1]} ${parts[2]}`; // Ex: "A4 AVANT"
+
+      if (parts.length >= 4) {
+        // Versão começa após o modelo
+        const versionParts = [];
+
+        for (let i = 3; i < parts.length; i++) {
+          // Motor geralmente é a última parte e tem letras maiúsculas sem números no início
+          if (i === parts.length - 1 && /^[A-Z0-9]{3,}$/.test(parts[i])) {
+            motor = parts[i];
+            break;
+          }
+          versionParts.push(parts[i]);
+        }
+
+        version = versionParts.join(" ") || null;
+      }
+    } else {
+      model = parts[1]; // Ex: "308"
+
+      if (parts.length >= 3) {
+        const versionParts = [];
+
+        for (let i = 2; i < parts.length; i++) {
+          if (i === parts.length - 1 && /^[A-Z0-9]{3,}$/.test(parts[i])) {
+            motor = parts[i];
+            break;
+          }
+          versionParts.push(parts[i]);
+        }
+
+        version = versionParts.join(" ") || null;
+      }
+    }
+  }
+
+  return { brand, model, version, motor };
+}
+
+// Mapeia item enriquecido -> payload Azeler
+function mapItemToAzelerPayload(item) {
+  // Extrair dados do metadatos
+  const metaData = parseMetadatos(item.metadatos);
+
+  // warehouseId = idPiezaDesp (apenas números)
+  const warehouseId =
+    item.idPiezaDesp != null
+      ? Number(String(item.idPiezaDesp).replace(/\D/g, "")) || 0
+      : 0;
+
+  // categoryId (se disponível)
+  const categoryId =
+    item.idVSubSubFam || item.idVSubFam || item.idVFam
+      ? Number(
+          String(item.idVSubSubFam || item.idVSubFam || item.idVFam).replace(
+            /\D/g,
+            ""
+          )
+        ) || null
+      : null;
+
+  // externalPlatformName fixo
+  const externalPlatformName = "INNOVA_API";
+
+  // partDescription = descripcion
+  const partDescription = item.descripcion || item.desc || null;
+
+  // vehicleType = 4 (padrão)
+  const vehicleType = Number(item.vehicleType || 4);
+
+  // brand, model, version, motor = extraídos de metadatos
+  const brand = metaData.brand;
+  const model = metaData.model;
+  const version = metaData.version;
+  const motor = metaData.motor;
+
+  // price = precioV
+  const price =
+    item.precioV != null
+      ? Number(String(item.precioV).replace(",", "."))
+      : null;
+
+  // disassembled = desmontado (1 = true, outros = false)
+  const disassembled = String(item.desmontado || "").trim() === "1";
+
+  // warehouseEntryDate = data atual
+  const warehouseEntryDate = new Date().toISOString().slice(0, 10);
+
+  // physicalState = 5 (Usada - pieza recuperada)
+  const physicalState = 5;
+
+  // observations = observ ou observaciones
+  const observations = item.observ || item.observaciones || null;
+
+  // referenceOE = refsOEM
+  const referenceOE = item.refsOEM || item.refsOE || null;
+
+  // referenceA = vazio
+  const referenceA = "";
+
+  // warrantyMonths = 6 (padrão)
+  const warrantyMonths = 6;
+
+  // Kms
+  const Kms = item.kms != null ? Number(item.kms) : null;
+
+  // year
+  const year = item.year || null;
+
+  // color
+  const color = item.color || null;
+
+  // quantity = cantidad ou cantidadV
+  const quantity = Number(item.cantidad || item.cantidadV || 1) || 1;
+
+  // weight = peso ou pesoExacto
+  const weight =
+    item.pesoExacto != null
+      ? Number(String(item.pesoExacto).replace(",", "."))
+      : item.peso != null
+      ? Number(String(item.peso).replace(",", "."))
+      : null;
+
+  // photos = extraídas de images (rutaimgsrvsto)
+  const photos = extractPhotosFromItem(item);
+
+  // photosVeh = vazio por enquanto
+  const photosVeh = [];
+
+  // codVehiculo = idModel (número)
+  const codVehiculo =
+    item.idModel != null
+      ? Number(String(item.idModel).replace(/\D/g, "")) || null
+      : null;
+
+  // fuel
+  const fuel = item.fuel != null ? Number(item.fuel) : null;
+
+  // vin = bastidor
+  const vin = item.bastidor ? String(item.bastidor) : null;
+
+  return {
+    warehouseId,
+    categoryId,
+    externalPlatformName,
+    partDescription,
+    vehicleType,
+    brand,
+    model,
+    version,
+    motor,
+    price,
+    disassembled,
+    warehouseEntryDate,
+    physicalState,
+    observations,
+    referenceOE,
+    referenceA,
+    warrantyMonths,
+    Kms,
+    year,
+    color,
+    quantity,
+    weight,
+    photos,
+    photosVeh,
+    codVehiculo,
+    fuel,
+    vin,
+  };
+}
+
+// Envia um lote de itens para o Azeler (em batch de 5)
+async function sendBatchToAzeler(batch) {
+  const method = "POST";
+  const endpoint = AZELER_ENDPOINT;
+
+  console.log(
+    `[Azeler] Enviando lote (${batch.length}) -> ${API_CONFIG.baseURL}${endpoint}`
+  );
+
+  const result = await fetchWithRetryAzeler(
+    method,
+    endpoint,
+    batch,
+    AZELER_MAX_RETRIES,
+    AZELER_REQ_TIMEOUT_MS
+  );
+
+  console.log(`[Azeler] Lote enviado com sucesso. Status: ${result.status}`);
+  return result.data;
+}
+
+// Lê NDJSON enriquecido e envia em lotes de 5
+async function sendEnrichedNdjsonToAzeler(
+  path = "despiece.enriched.ndjson",
+  limitItems = null
+) {
+  console.log(
+    `\n[Azeler] Iniciando envio de ${
+      limitItems ? limitItems + " itens" : "todos os itens"
+    } de ${path} ao Azeler...`
+  );
+
+  if (!fs.existsSync(path)) {
+    console.warn(`[Azeler] Arquivo não encontrado: ${path}`);
+    return { read: 0, sent: 0, failed: 0 };
+  }
+
+  const rl = readline.createInterface({
+    input: fs.createReadStream(path, { encoding: "utf8" }),
+    crlfDelay: Infinity,
+  });
+
+  let buffer = [];
+  let count = 0;
+  let sent = 0;
+  let failed = 0;
+
+  for await (const line of rl) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    try {
+      const item = JSON.parse(trimmed);
+      const payload = mapItemToAzelerPayload(item);
+      buffer.push(payload);
+      count++;
+
+      if (buffer.length === AZELER_BATCH_SIZE) {
+        try {
+          await sendBatchToAzeler(buffer);
+          sent += buffer.length;
+        } catch (err) {
+          console.error(`[Azeler][Erro Lote] ${err.message}. Continuando...`);
+          failed += buffer.length;
+        }
+        buffer = [];
+      }
+
+      if (limitItems && count >= limitItems) break;
+    } catch (err) {
+      console.warn(`[Azeler][Parse] Ignorando linha inválida: ${err.message}`);
+      failed++;
+    }
+  }
+
+  if (buffer.length) {
+    try {
+      await sendBatchToAzeler(buffer);
+      sent += buffer.length;
+    } catch (err) {
+      console.error(`[Azeler][Erro Lote-Final] ${err.message}. Continuando...`);
+      failed += buffer.length;
+    }
+  }
+
+  console.log(
+    `[Azeler][Resumo] Total lido=${count} | enviado=${sent} | falhou=${failed}`
+  );
+  return { read: count, sent, failed };
+}
+
+// =========================
+// Sincronização principal
+// =========================
 async function syncDespiece(options = {}) {
   const {
     onProgress = null,
     saveToFile = false,
     outputPathRaw = "despiece.raw.ndjson",
     outputPathEnriched = "despiece.enriched.ndjson",
+    sendToAzelerPerPage = false,
+    azelerSendLimit = 5,
   } = options;
 
-  // Arquivos fixos (limpar no início)
   if (saveToFile) {
     if (fs.existsSync(outputPathRaw)) {
       fs.unlinkSync(outputPathRaw);
@@ -469,14 +885,12 @@ async function syncDespiece(options = {}) {
   let totalProcessed = 0;
   let pageCount = 0;
 
-  // reset controladores
   imageConcurrency = MAX_CONCURRENCY_IMAGES_INITIAL;
   gesdocErrorsWindow.length = 0;
   cbCoolingDownUntil = 0;
 
   console.log("[Sync] Iniciando sincronização (duas fases por página)...");
 
-  // Streams persistentes (append mode)
   let rawStream = null;
   let enrStream = null;
 
@@ -492,6 +906,29 @@ async function syncDespiece(options = {}) {
     );
   }
 
+  async function writePageToTempAndSend(enrichedItems) {
+    if (!sendToAzelerPerPage) return;
+
+    const tmpPath = `.tmp.enriched.page.ndjson`;
+    try {
+      fs.writeFileSync(tmpPath, "", "utf8");
+      const w = fs.createWriteStream(tmpPath, { flags: "a" });
+      for (const it of enrichedItems) {
+        w.write(JSON.stringify(it) + "\n");
+      }
+      await new Promise((res) => w.end(res));
+      await sendEnrichedNdjsonToAzeler(tmpPath, null);
+    } catch (e) {
+      console.error(
+        `[Azeler][PerPage] Falha ao enviar página: ${e.message}. Continuando...`
+      );
+    } finally {
+      try {
+        if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+      } catch {}
+    }
+  }
+
   try {
     while (currentPageUrl) {
       pageCount++;
@@ -499,7 +936,6 @@ async function syncDespiece(options = {}) {
       try {
         const pageJson = await fetchDespiecePage(currentPageUrl);
 
-        // Fase A: coletar itens e gravar raw
         const rawPass = saveToFile ? new PassThrough() : null;
         if (saveToFile && rawPass) {
           pipeline(rawPass, rawStream, { end: false }).catch((err) =>
@@ -518,7 +954,7 @@ async function syncDespiece(options = {}) {
               const currentPage = pageJson?.links?.current_page;
 
               onProgress({
-                status: progress.status, // page_collected
+                status: progress.status,
                 currentPage,
                 lastPage,
                 total,
@@ -538,42 +974,56 @@ async function syncDespiece(options = {}) {
         if (rawPass) rawPass.end();
         totalProcessed += items.length;
 
-        // Fase B: enriquecer com imagens e gravar enriched
         const enrPass = saveToFile ? new PassThrough() : null;
+        let enrichedBufferForPage = [];
         if (saveToFile && enrPass) {
           pipeline(enrPass, enrStream, { end: false }).catch((err) =>
             console.error("[Write ENR] Erro:", err)
           );
         }
 
-        await enrichPageImages(items, pageCount, enrPass, (progress) => {
-          if (onProgress) {
-            const total = pageJson?.links?.total;
-            const lastPage = pageJson?.links?.last_page;
-            const currentPage = pageJson?.links?.current_page;
+        await enrichPageImages(
+          items,
+          pageCount,
+          {
+            write: (line) => {
+              if (enrPass) enrPass.write(line);
+              try {
+                const it = JSON.parse(line);
+                enrichedBufferForPage.push(it);
+              } catch {}
+            },
+          },
+          (progress) => {
+            if (onProgress) {
+              const total = pageJson?.links?.total;
+              const lastPage = pageJson?.links?.last_page;
+              const currentPage = pageJson?.links?.current_page;
 
-            onProgress({
-              status: progress.status, // images_enriching | images_enriched
-              currentPage,
-              lastPage,
-              total,
-              itemsInPage: progress.itemsInPage,
-              enrichedCount: progress.enrichedCount ?? 0,
-              withImages: progress.withImages ?? 0,
-              withoutImages: progress.withoutImages ?? 0,
-              errors: progress.errors ?? 0,
-              concurrency: progress.concurrency ?? imageConcurrency,
-              totalProcessed,
-              percentage: total
-                ? ((totalProcessed / total) * 100).toFixed(2)
-                : 0,
-            });
+              onProgress({
+                status: progress.status,
+                currentPage,
+                lastPage,
+                total,
+                itemsInPage: progress.itemsInPage,
+                enrichedCount: progress.enrichedCount ?? 0,
+                withImages: progress.withImages ?? 0,
+                withoutImages: progress.withoutImages ?? 0,
+                errors: progress.errors ?? 0,
+                concurrency: progress.concurrency ?? imageConcurrency,
+                totalProcessed,
+                percentage: total
+                  ? ((totalProcessed / total) * 100).toFixed(2)
+                  : 0,
+              });
+            }
           }
-        });
+        );
 
         if (enrPass) enrPass.end();
 
-        // Avança para a próxima página
+        await writePageToTempAndSend(enrichedBufferForPage);
+
         let nextUrl = pageJson?.links?.next_page_url || null;
         if (nextUrl) {
           try {
@@ -593,13 +1043,11 @@ async function syncDespiece(options = {}) {
         console.error(
           `[Sync][ERRO-PÁGINA] Erro ao processar página ${pageCount}: ${pageError.message}. Continuando para a próxima...`
         );
-        // Tenta avançar para a próxima página mesmo com erro
         pageCount++;
         currentPageUrl = `${BASE_URL}/vehidespiececoncreto?page=${pageCount}&per_page=${PER_PAGE}`;
       }
     }
 
-    // Fecha os streams
     if (rawStream) rawStream.end();
     if (enrStream) enrStream.end();
 
@@ -612,8 +1060,20 @@ async function syncDespiece(options = {}) {
     }
 
     console.log(
-      `[Sync] ✅ Sincronização concluída! Total processado: ${totalProcessed} itens`
+      `[Sync] Sincronização concluída. Total processado: ${totalProcessed} itens`
     );
+
+    try {
+      const resultAzeler = await sendEnrichedNdjsonToAzeler(
+        outputPathEnriched,
+        azelerSendLimit || 5
+      );
+      console.log(`[Sync->Azeler] Envio final concluído:`, resultAzeler);
+    } catch (e) {
+      console.error(
+        `[Sync->Azeler] Falha no envio final: ${e.message}. Processo concluído mesmo assim.`
+      );
+    }
 
     return {
       success: true,
@@ -621,10 +1081,9 @@ async function syncDespiece(options = {}) {
     };
   } catch (error) {
     console.error(
-      `[Sync] ⚠️ Erro na sincronização: ${error.message}. Mas continuando...`
+      `[Sync] Erro na sincronização: ${error.message}. Encerrando com sucesso parcial.`
     );
 
-    // Fecha os streams em caso de erro
     if (rawStream) rawStream.end();
     if (enrStream) enrStream.end();
 
@@ -636,7 +1095,6 @@ async function syncDespiece(options = {}) {
       });
     }
 
-    // NÃO lança o erro, apenas retorna com sucesso parcial
     return {
       success: false,
       totalProcessed,
@@ -645,4 +1103,8 @@ async function syncDespiece(options = {}) {
   }
 }
 
-module.exports = { syncDespiece };
+module.exports = {
+  syncDespiece,
+  sendEnrichedNdjsonToAzeler,
+  mapItemToAzelerPayload,
+};
